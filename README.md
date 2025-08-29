@@ -261,8 +261,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For support and questions:
 
-- **Email**: your.email@example.com
-- **GitHub**: [@yourusername](https://github.com/yourusername)
+- **Email**: software@farfallelab.com
+- **GitHub**: [@yourusername](https://github.com/AlbiAlibi)
 - **Documentation**: [Read the Docs](https://co-o2-analyser.readthedocs.io/)
 
 ---
