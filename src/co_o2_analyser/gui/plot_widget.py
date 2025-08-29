@@ -56,7 +56,7 @@ class PlotWidget(QWidget):
         
         # Time range selector
         self.time_range_combo = QComboBox()
-        self.time_range_combo.addItems(["1 hour", "6 hours", "24 hours", "7 days"])
+        self.time_range_combo.addItems(["1 min", "5 min", "10 min", "30 min", "1 hour", "3 hours"])
         self.time_range_combo.currentTextChanged.connect(self._on_time_range_changed)
         control_layout.addWidget(QLabel("Time Range:"))
         control_layout.addWidget(self.time_range_combo)
@@ -136,10 +136,76 @@ class PlotWidget(QWidget):
             return
         
         try:
+            # Get current time range selection
+            current_range = self.time_range_combo.currentText()
+            
+            # Calculate the cutoff time based on the selected range
+            now = datetime.now()
+            if current_range == "1 min":
+                cutoff_time = now - timedelta(minutes=1)
+            elif current_range == "5 min":
+                cutoff_time = now - timedelta(minutes=5)
+            elif current_range == "10 min":
+                cutoff_time = now - timedelta(minutes=10)
+            elif current_range == "30 min":
+                cutoff_time = now - timedelta(minutes=30)
+            elif current_range == "1 hour":
+                cutoff_time = now - timedelta(hours=1)
+            elif current_range == "3 hours":
+                cutoff_time = now - timedelta(hours=3)
+            else:
+                # Default to 1 hour if unknown
+                cutoff_time = now - timedelta(hours=1)
+            
+            # Filter measurements within the time range
+            filtered_measurements = [
+                m for m in self.measurements 
+                if m.timestamp >= cutoff_time
+            ]
+            
+            # Update the plot with filtered data
+            if filtered_measurements:
+                self._update_plot_with_data(filtered_measurements)
+            else:
+                # Clear plot if no data in range
+                self.co_line.set_data([], [])
+                self.o2_line.set_data([], [])
+                self.canvas.draw()
+                
+        except Exception as e:
+            logger.error(f"Failed to update plot: {e}")
+    
+    def _on_plot_type_changed(self, plot_type: str):
+        """Handle plot type change.
+        
+        Args:
+            plot_type: New plot type
+        """
+        logger.info(f"Plot type changed to: {plot_type}")
+        # TODO: Implement different plot types
+    
+    def _on_time_range_changed(self, time_range: str):
+        """Handle time range change.
+        
+        Args:
+            time_range: New time range
+        """
+        logger.info(f"Time range changed to: {time_range}")
+        
+        # Trigger a plot update with the new time range
+        self._update_plot()
+    
+    def _update_plot_with_data(self, measurements: List[Measurement]):
+        """Update the plot with specific measurement data.
+        
+        Args:
+            measurements: List of measurements to display
+        """
+        try:
             # Extract data
-            timestamps = [m.timestamp for m in self.measurements]
-            co_values = [m.co_concentration for m in self.measurements]
-            o2_values = [m.o2_concentration for m in self.measurements]
+            timestamps = [m.timestamp for m in measurements]
+            co_values = [m.co_concentration for m in measurements]
+            o2_values = [m.o2_concentration for m in measurements]
             
             # Filter out None values
             valid_data = [(t, co, o2) for t, co, o2 in zip(timestamps, co_values, o2_values) 
@@ -165,25 +231,7 @@ class PlotWidget(QWidget):
             self.canvas.draw()
             
         except Exception as e:
-            logger.error(f"Failed to update plot: {e}")
-    
-    def _on_plot_type_changed(self, plot_type: str):
-        """Handle plot type change.
-        
-        Args:
-            plot_type: New plot type
-        """
-        logger.info(f"Plot type changed to: {plot_type}")
-        # TODO: Implement different plot types
-    
-    def _on_time_range_changed(self, time_range: str):
-        """Handle time range change.
-        
-        Args:
-            time_range: New time range
-        """
-        logger.info(f"Time range changed to: {time_range}")
-        # TODO: Implement time range filtering
+            logger.error(f"Failed to update plot with data: {e}")
     
     def clear_plot(self):
         """Clear all data from the plot."""
