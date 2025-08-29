@@ -157,12 +157,41 @@ class COO2Analyzer:
         
         with open(export_path, 'w', newline='') as csvfile:
             fieldnames = ['timestamp', 'co_concentration', 'o2_concentration', 
-                         'temperature', 'humidity', 'pressure', 'instrument_status']
+                         'temperature', 'humidity', 'pressure', 'instrument_status', 'fume_limit_mg_m3', 'percentage_to_limit']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
             writer.writeheader()
             for measurement in measurements:
-                writer.writerow(measurement.to_dict())
+                # Calculate fume limit for each measurement
+                measurement_dict = measurement.to_dict()
+                if (measurement.co_concentration is not None and 
+                    measurement.o2_concentration is not None):
+                    
+                    # Check if this is fresh air (O2 close to 21%, CO low)
+                    if (measurement.o2_concentration >= 18.0 and 
+                        measurement.co_concentration <= 50):
+                        # Fresh air conditions - simple conversion
+                        fume_limit = measurement.co_concentration * 1.25
+                        measurement_dict['fume_limit_mg_m3'] = f"{fume_limit:.1f}"
+                    elif measurement.o2_concentration < 18.0:  # Industrial exhaust conditions
+                        # Use the full formula for exhaust fumes
+                        fume_limit = (measurement.co_concentration * 1.25 * 
+                                     ((21 - 13) / (21 - measurement.o2_concentration)))
+                        
+                        # Calculate percentage to 500 mg/m³ limit
+                        co_limit = 500.0  # mg/m³
+                        percentage_to_limit = (fume_limit / co_limit) * 100
+                        
+                        # Add both fume limit and percentage to CSV
+                        measurement_dict['fume_limit_mg_m3'] = f"{fume_limit:.1f}"
+                        measurement_dict['percentage_to_limit'] = f"{percentage_to_limit:.1f}%"
+                    else:
+                        measurement_dict['fume_limit_mg_m3'] = "--"
+                        measurement_dict['percentage_to_limit'] = "--"
+                else:
+                    measurement_dict['fume_limit_mg_m3'] = "--"
+                
+                writer.writerow(measurement_dict)
         
         logger.info(f"Data exported to CSV: {export_path}")
         return str(export_path)

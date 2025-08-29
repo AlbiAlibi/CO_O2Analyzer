@@ -138,7 +138,9 @@ class DatabaseManager:
         cursor = self.connection.cursor()
         
         query = """
-            SELECT * FROM measurements 
+            SELECT timestamp, co_concentration, o2_concentration, 
+                   temperature, humidity, pressure, instrument_status
+            FROM measurements 
             ORDER BY timestamp DESC 
             LIMIT ? OFFSET ?
         """
@@ -147,10 +149,14 @@ class DatabaseManager:
             cursor.execute(query, (limit, offset))
             rows = cursor.fetchall()
             
-            # Convert to list of dictionaries
+            # Convert to list of dictionaries with proper field names
             measurements = []
+            field_names = ['timestamp', 'co_concentration', 'o2_concentration', 
+                          'temperature', 'humidity', 'pressure', 'instrument_status']
+            
             for row in rows:
-                measurements.append(dict(row))
+                measurement_dict = dict(zip(field_names, row))
+                measurements.append(measurement_dict)
             
             return measurements
             

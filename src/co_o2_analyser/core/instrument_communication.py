@@ -36,23 +36,31 @@ class SimulatedInstrumentCommunication:
                 'status': 'OK'
             },
             'industrial_exhaust': {
-                'co_concentration': (290.0, 300.0),    # High CO from oven fumes
+                'co_concentration': (290.0, 350.0),    # High CO from oven fumes
                 'o2_concentration': (7.8, 8.0),        # Depleted oxygen
                 'temperature': (35.0, 45.0),            # Elevated temperature
                 'humidity': (20.0, 40.0),              # Lower humidity
                 'pressure': (1005.0, 1015.0),          # Slightly lower pressure
                 'status': 'WARNING - High CO'
+            },
+            'extreme_fumes': {
+                'co_concentration': (795.0, 905.0),    # Extreme CO - centered around 500 ppm
+                'o2_concentration': (4.8, 5.2),        # Very low oxygen - centered around 5%
+                'temperature': (50.0, 60.0),            # High temperature
+                'humidity': (15.0, 25.0),              # Very low humidity
+                'pressure': (1000.0, 1010.0),          # Lower pressure
+                'status': 'CRITICAL - Extreme CO'
             }
         }
         
-        # Start in clean air mode, switch every 30 seconds
+        # Start in clean air mode, switch every 30 seconds through 3 modes
         self.current_mode = 'clean_air'
         self.mode_switch_time = 30.0
         
         # Add realistic noise and drift based on real measurements
         self.noise_levels = {
-            'co_concentration': (0.1, 0.5),    # ±0.1-0.5 ppm noise
-            'o2_concentration': (0.01, 0.05),  # ±0.01-0.05% noise
+            'co_concentration': (0.1, 6.5),    # ±0.1-0.5 ppm noise
+            'o2_concentration': (0.01, 1.5),  # ±0.01-0.05% noise
             'temperature': (0.1, 0.3),         # ±0.1-0.3°C noise
             'humidity': (0.5, 1.5),            # ±0.5-1.5% noise
             'pressure': (0.1, 0.5)             # ±0.1-0.5 hPa noise
@@ -63,12 +71,14 @@ class SimulatedInstrumentCommunication:
     def _get_current_mode(self):
         """Determine current operational mode based on time."""
         elapsed_time = time.time() - self.start_time
-        mode_index = int(elapsed_time / self.mode_switch_time) % 2
+        mode_index = int(elapsed_time / self.mode_switch_time) % 3
         
         if mode_index == 0:
             return 'clean_air'
-        else:
+        elif mode_index == 1:
             return 'industrial_exhaust'
+        else:
+            return 'extreme_fumes'
     
     def _add_realistic_noise(self, base_value: float, parameter: str) -> float:
         """Add realistic noise based on actual measurement patterns."""
@@ -128,11 +138,11 @@ class SimulatedInstrumentCommunication:
                 
                 # Ensure values stay in reasonable ranges
                 if field == 'co_concentration':
-                    value = max(0, min(500, value))  # 0-500 ppm
+                    value = max(0, min(1000, value))  # 0-800 ppm (allow extreme_fumes to exceed 500)
                 elif field == 'o2_concentration':
-                    value = max(5, min(25, value))   # 5-25%
+                    value = max(3, min(25, value))   # 3-25% (allow extreme_fumes to go below 5%)
                 elif field == 'temperature':
-                    value = max(-10, min(60, value))  # -10 to 60°C
+                    value = max(-10, min(70, value))  # -10 to 70°C
                 elif field == 'humidity':
                     value = max(0, min(100, value))   # 0-100%
                 elif field == 'pressure':
@@ -178,8 +188,13 @@ class SimulatedInstrumentCommunication:
             # Determine mode for this historical point
             historical_time = timestamp.timestamp()
             time_diff = historical_time - self.start_time
-            historical_mode_index = int(time_diff / self.mode_switch_time) % 2
-            historical_mode = 'clean_air' if historical_mode_index == 0 else 'industrial_exhaust'
+            historical_mode_index = int(time_diff / self.mode_switch_time) % 3
+            if historical_mode_index == 0:
+                historical_mode = 'clean_air'
+            elif historical_mode_index == 1:
+                historical_mode = 'industrial_exhaust'
+            else:
+                historical_mode = 'extreme_fumes'
             
             # Generate data for this historical point
             mode_data = self.operational_modes[historical_mode]

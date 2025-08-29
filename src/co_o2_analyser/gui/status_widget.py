@@ -88,13 +88,20 @@ class StatusWidget(QWidget):
         
         layout.addWidget(measurements_group)
         
-        # Instrument status group
-        status_group = QGroupBox("Instrument Status")
+        # Exhaust Fume Limit group
+        status_group = QGroupBox("Exhaust Fume Limit")
         status_layout = QVBoxLayout(status_group)
         
-        self.instrument_status = QLabel("Unknown")
-        self.instrument_status.setStyleSheet("font-weight: bold; font-size: 12px;")
-        status_layout.addWidget(self.instrument_status)
+        # Fume limit value display
+        self.fume_limit_label = QLabel("-- mg/m³")
+        self.fume_limit_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.fume_limit_label.setToolTip("Normalized CO concentration corrected for oxygen content (21% O₂ reference). Used for regulatory compliance.")
+        status_layout.addWidget(self.fume_limit_label)
+        
+        # Air quality indicator
+        self.air_quality_label = QLabel("Calculating...")
+        self.air_quality_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        status_layout.addWidget(self.air_quality_label)
         
         # Status progress bar
         self.status_progress = QProgressBar()
@@ -177,20 +184,63 @@ class StatusWidget(QWidget):
                 self.pressure_label.setText("--")
                 self.pressure_label.setStyleSheet("color: gray;")
             
-            # Update instrument status
-            if measurement.instrument_status:
-                self.instrument_status.setText(measurement.instrument_status)
-                self._set_status_color(measurement.instrument_status)
+            # Calculate and update exhaust fume limit
+            if (measurement.co_concentration is not None and 
+                measurement.o2_concentration is not None):
                 
-                # Update progress bar based on status
-                if "OK" in measurement.instrument_status.upper():
+                # Check if this is fresh air (O2 close to 21%, CO low)
+                if (measurement.o2_concentration >= 18.0 and 
+                    measurement.co_concentration <= 50):
+                    # Fresh air conditions - show low normalized value
+                    fume_limit = measurement.co_concentration * 1.25  # Simple conversion to mg/m³
+                    self.fume_limit_label.setText(f"{fume_limit:.1f} mg/m³")
+                    self.air_quality_label.setText("🟢 Fresh Air")
+                    self.air_quality_label.setStyleSheet("color: green; font-weight: bold; font-size: 12px;")
                     self.status_progress.setValue(100)
-                elif "WARNING" in measurement.instrument_status.upper():
-                    self.status_progress.setValue(60)
-                elif "ERROR" in measurement.instrument_status.upper():
-                    self.status_progress.setValue(20)
+                    self.status_progress.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+                    
+                elif measurement.o2_concentration < 18.0:  # Industrial exhaust conditions
+                    # Calculate exhaust fume limit using the formula:
+                    # CO[ppm] * 1.25 * ((21-13)/(21- O2[%])) = mg/m³
+                    fume_limit = (measurement.co_concentration * 1.25 * 
+                                 ((21 - 13) / (21 - measurement.o2_concentration)))
+                    
+                    # CO limit is 500 mg/m³ - calculate percentage to limit
+                    co_limit = 500.0  # mg/m³
+                    percentage_to_limit = (fume_limit / co_limit) * 100
+                    
+                    # Display the result in mg/m³ with percentage to limit
+                    self.fume_limit_label.setText(f"{fume_limit:.1f} mg/m³ ({percentage_to_limit:.1f}% of limit)")
+                    
+                    # Color coding based on percentage to limit:
+                    # Green: 0-50% of limit, Yellow: 50-100% of limit, Red: over 100% of limit
+                    if percentage_to_limit < 50:  # 0-49% of limit - Green
+                        self.air_quality_label.setText("🟢 Low Fumes")
+                        self.air_quality_label.setStyleSheet("color: green; font-weight: bold; font-size: 12px;")
+                        self.status_progress.setValue(int(percentage_to_limit))  # Direct percentage: 0-49%
+                        self.status_progress.setStyleSheet("QProgressBar::chunk { background-color: green; }")
+                    elif percentage_to_limit <= 100:  # 50-100% of limit - Yellow
+                        self.air_quality_label.setText("🟡 Medium Fumes")
+                        self.air_quality_label.setStyleSheet("color: #FFD700; font-weight: bold; font-size: 12px;")  # Light yellow
+                        self.status_progress.setValue(int(percentage_to_limit))  # Direct percentage: 50-100%
+                        self.status_progress.setStyleSheet("QProgressBar::chunk { background-color: #FFD700; }")  # Light yellow
+                    else:  # Over 100% of limit - Red (exceeds limit)
+                        self.air_quality_label.setText("🔴 EXCEEDS LIMIT!")
+                        self.air_quality_label.setStyleSheet("color: red; font-weight: bold; font-size: 12px;")
+                        self.status_progress.setValue(100)  # Maximum at 100%
+                        self.status_progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
                 else:
+                    self.fume_limit_label.setText("-- mg/m³")
+                    self.air_quality_label.setText("Invalid O₂")
+                    self.air_quality_label.setStyleSheet("color: gray; font-weight: bold; font-size: 12px;")
                     self.status_progress.setValue(50)
+                    self.status_progress.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
+            else:
+                self.fume_limit_label.setText("-- mg/m³")
+                self.air_quality_label.setText("No Data")
+                self.air_quality_label.setStyleSheet("color: gray; font-weight: bold; font-size: 12px;")
+                self.status_progress.setValue(0)
+                self.status_progress.setStyleSheet("QProgressBar::chunk { background-color: gray; }")
             
             # Update last update time
             self.last_update_label.setText(measurement.timestamp.strftime("%H:%M:%S"))
@@ -310,3 +360,29 @@ class StatusWidget(QWidget):
         self.status_progress.setValue(0)
         
         logger.info("Status display cleared")
+
+    def get_fume_limit_value(self) -> Optional[float]:
+        """Get the current exhaust fume limit value for export.
+        
+        Returns:
+            Fume limit value in mg/m³ or None if not available
+        """
+        if (self.current_measurement and 
+            self.current_measurement.co_concentration is not None and
+            self.current_measurement.o2_concentration is not None and
+            self.current_measurement.o2_concentration < 21.0):
+            
+            fume_limit = (self.current_measurement.co_concentration * 1.25 * 
+                         ((21 - 13) / (21 - self.current_measurement.o2_concentration)))
+            return fume_limit
+        return None
+    
+    def get_air_quality_status(self) -> str:
+        """Get the current air quality status for export.
+        
+        Returns:
+            Air quality status string
+        """
+        if self.air_quality_label:
+            return self.air_quality_label.text()
+        return "Unknown"
