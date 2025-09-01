@@ -199,7 +199,6 @@ config.json
 .env.production
 
 # Data files
-data/
 exports/
 *.csv
 *.xlsx
