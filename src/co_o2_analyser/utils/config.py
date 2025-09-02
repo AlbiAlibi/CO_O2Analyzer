@@ -40,7 +40,7 @@ class Config:
                 "port": 8180,
                 "timeout": 30,
                 "retry_attempts": 3,
-                "simulation_mode": False,  # Enable simulation mode by default
+                "simulation_mode": True,  # Enable simulation mode by default
                 "data_simulation": False,  # Enable data simulation by default
                 "tags": {
                     "instrument_status": [

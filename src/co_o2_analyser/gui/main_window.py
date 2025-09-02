@@ -7,13 +7,13 @@ all GUI components.
 
 import sys
 import logging
-import subprocess
+
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QLabel, QStatusBar, QMenuBar, QMenu,
-    QMessageBox, QApplication, QSplitter
+    QMessageBox, QApplication, QSplitter, QInputDialog
 )
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QAction
@@ -43,7 +43,6 @@ class MainWindow(QMainWindow):
         self.config = config
         self.analyzer = None
         self.monitoring_timer = None
-        self.data_collector_process = None
         
         # Initialize UI
         self._init_ui()
@@ -132,10 +131,10 @@ class MainWindow(QMainWindow):
         self.monitor_button.clicked.connect(self._toggle_monitoring)
         toolbar.addWidget(self.monitor_button)
         
-        # Start/Stop data collection service button
-        self.data_collector_button = QPushButton("Start Data Collection")
-        self.data_collector_button.clicked.connect(self._toggle_data_collection)
-        toolbar.addWidget(self.data_collector_button)
+        # Start/Stop measurement session button
+        self.measurement_session_button = QPushButton("Start Measurement Session")
+        self.measurement_session_button.clicked.connect(self._toggle_measurement_session)
+        toolbar.addWidget(self.measurement_session_button)
         
         # Refresh button
         refresh_button = QPushButton("Refresh")
@@ -223,11 +222,7 @@ class MainWindow(QMainWindow):
         self.connection_timer.timeout.connect(self._check_connection)
         self.connection_timer.start(5000)  # Check every 5 seconds
         
-        # Timer for data collector status updates
-        self.data_collector_timer = QTimer()
-        self.data_collector_timer.timeout.connect(self._check_data_collector_status)
-        self.data_collector_timer.start(2000)  # Check every 2 seconds
-    
+
     def _toggle_monitoring(self):
         """Toggle monitoring on/off."""
         if self.monitoring_timer.isActive():
@@ -264,81 +259,97 @@ class MainWindow(QMainWindow):
         
         logger.info("Monitoring stopped")
     
-    def _toggle_data_collection(self):
-        """Toggle data collection service on/off."""
-        if self.data_collector_process and self.data_collector_process.poll() is None:
-            self._stop_data_collection()
+    def _toggle_measurement_session(self):
+        """Toggle measurement session on/off."""
+        if not self.analyzer:
+            QMessageBox.warning(self, "Warning", "Analyzer not initialized")
+            return
+        
+        session_status = self.analyzer.get_measurement_session_status()
+        
+        if session_status.get('is_collecting', False):
+            self._stop_measurement_session()
         else:
-            self._start_data_collection()
+            self._start_measurement_session()
     
-    def _start_data_collection(self):
-        """Start the data collection service."""
+    def _start_measurement_session(self):
+        """Start a new measurement session."""
         try:
-            # Start data collection service as a subprocess
-            script_path = Path(__file__).parent.parent.parent.parent / "start_data_collector.py"
-            
-            if not script_path.exists():
-                # Try alternative path
-                script_path = Path("start_data_collector.py")
-            
-            if not script_path.exists():
-                QMessageBox.critical(self, "Error", "Data collector script not found")
-                return
-            
-            # Start the data collection service
-            self.data_collector_process = subprocess.Popen(
-                [sys.executable, str(script_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            # Get duration from user (default 10 minutes)
+            duration, ok = QInputDialog.getInt(
+                self, 
+                "Measurement Session Duration", 
+                "Enter duration in minutes:", 
+                10, 1, 60, 1
             )
             
-            # Update UI
-            self.data_collector_button.setText("Stop Data Collection")
-            self.status_bar.showMessage("Data collection service started")
-            logger.info("Data collection service started")
+            if not ok:
+                return
             
-            # Start monitoring timer to update status widget
+            # Start the measurement session
+            session_path = self.analyzer.start_measurement_session(duration)
+            
+            # Update UI
+            self.measurement_session_button.setText("Stop Measurement Session")
+            self.status_bar.showMessage(f"Measurement session started: {session_path}")
+            logger.info(f"Measurement session started: {session_path}")
+            
+            # Start a timer to automatically stop the session after duration
+            self.measurement_timer = QTimer()
+            self.measurement_timer.timeout.connect(self._auto_stop_measurement_session)
+            self.measurement_timer.start(duration * 60 * 1000)  # Convert minutes to milliseconds
+            
+            # Start monitoring timer to collect data during session
             if not self.monitoring_timer.isActive():
-                self.monitoring_timer.start(1000)
+                self.monitoring_timer.start(1000)  # Collect data every second
             
         except Exception as e:
-            logger.error(f"Failed to start data collection service: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to start data collection service: {e}")
+            logger.error(f"Failed to start measurement session: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to start measurement session: {e}")
     
-    def _stop_data_collection(self):
-        """Stop the data collection service."""
+    def _stop_measurement_session(self):
+        """Stop the current measurement session."""
         try:
-            if self.data_collector_process:
-                # Terminate the process
-                self.data_collector_process.terminate()
-                
-                # Wait for it to finish
-                try:
-                    self.data_collector_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # Force kill if it doesn't terminate gracefully
-                    self.data_collector_process.kill()
-                
-                self.data_collector_process = None
+            if not self.analyzer:
+                return
+            
+            # Stop the measurement session
+            session_path = self.analyzer.stop_measurement_session()
+            
+            # Stop the auto-stop timer
+            if hasattr(self, 'measurement_timer') and self.measurement_timer:
+                self.measurement_timer.stop()
+                self.measurement_timer = None
             
             # Update UI
-            self.data_collector_button.setText("Start Data Collection")
-            self.status_bar.showMessage("Data collection service stopped")
-            logger.info("Data collection service stopped")
+            self.measurement_session_button.setText("Start Measurement Session")
+            if session_path:
+                self.status_bar.showMessage(f"Measurement session completed: {session_path}")
+                logger.info(f"Measurement session completed: {session_path}")
+                
+                # Show completion message
+                QMessageBox.information(
+                    self, 
+                    "Measurement Session Complete", 
+                    f"Measurement session completed successfully!\n\n"
+                    f"Data saved to: {session_path}\n"
+                    f"You can export this data using the Export button."
+                )
+            else:
+                self.status_bar.showMessage("Measurement session stopped")
+                logger.info("Measurement session stopped")
             
         except Exception as e:
-            logger.error(f"Failed to stop data collection service: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to stop data collection service: {e}")
+            logger.error(f"Failed to stop measurement session: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to stop measurement session: {e}")
     
-    def _check_data_collector_status(self):
-        """Check if data collection service is still running."""
-        if self.data_collector_process and self.data_collector_process.poll() is not None:
-            # Process has terminated
-            self.data_collector_button.setText("Start Data Collection")
-            self.status_bar.showMessage("Data collection service stopped unexpectedly")
-            logger.warning("Data collection service stopped unexpectedly")
-            self.data_collector_process = None
+    def _auto_stop_measurement_session(self):
+        """Automatically stop measurement session when duration is reached."""
+        try:
+            logger.info("Auto-stopping measurement session - duration reached")
+            self._stop_measurement_session()
+        except Exception as e:
+            logger.error(f"Failed to auto-stop measurement session: {e}")
     
     def _update_data(self):
         """Update measurement data."""
@@ -359,6 +370,22 @@ class MainWindow(QMainWindow):
                 
                 # Emit signal
                 self.measurement_received.emit(measurement.to_dict())
+                
+                # If we're in a measurement session, add data to the session database
+                session_status = self.analyzer.get_measurement_session_status()
+                if session_status.get('is_collecting', False):
+                    if (measurement.co_concentration is not None and 
+                        measurement.o2_concentration is not None):
+                        success = self.analyzer.add_measurement_to_session(
+                            co_concentration=measurement.co_concentration,
+                            o2_concentration=measurement.o2_concentration,
+                            sample_temp=measurement.sample_temp,
+                            sample_flow=measurement.sample_flow
+                        )
+                        if success:
+                            logger.debug("Added measurement to session database")
+                        else:
+                            logger.warning("Failed to add measurement to session database")
                 
         except Exception as e:
             logger.error(f"Failed to update data: {e}")
@@ -426,6 +453,14 @@ class MainWindow(QMainWindow):
             # Stop monitoring
             if self.monitoring_timer.isActive():
                 self._stop_monitoring()
+            
+            # Stop measurement session if active
+            if hasattr(self, 'analyzer') and self.analyzer:
+                session_status = self.analyzer.get_measurement_session_status()
+                if session_status.get('is_collecting', False):
+                    # Use force stop to ensure end_time is recorded
+                    self.analyzer.force_stop_measurement_session()
+                    logger.info("Force stopped measurement session during application close")
             
             # Save configuration
             if self.config:

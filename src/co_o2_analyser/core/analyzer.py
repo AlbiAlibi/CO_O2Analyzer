@@ -12,7 +12,7 @@ from dataclasses import asdict
 
 from ..data.models import Measurement
 from ..utils.config import Config
-from ..utils.database import DatabaseManager
+from ..utils.database import DatabaseManager, MeasurementDatabaseManager
 from .instrument_communication import InstrumentCommunication
 from .data_processor import DataProcessor
 
@@ -31,8 +31,17 @@ class COO2Analyzer:
         """
         self.config = config
         self.db_manager = DatabaseManager(config.get('database.path'))
+        self.measurement_db_manager = MeasurementDatabaseManager()
         self.instrument = InstrumentCommunication(config)
         self.data_processor = DataProcessor()
+        
+        # Fix any incomplete sessions from previous runs
+        try:
+            fixed_count = self.measurement_db_manager.fix_incomplete_sessions()
+            if fixed_count > 0:
+                logger.info(f"Fixed {fixed_count} incomplete measurement sessions from previous runs")
+        except Exception as e:
+            logger.warning(f"Failed to fix incomplete sessions: {e}")
         
         logger.info("COO2Analyzer initialized")
     
@@ -80,9 +89,8 @@ class COO2Analyzer:
                 timestamp=datetime.now(),
                 co_concentration=processed_data.get('co_concentration'),
                 o2_concentration=processed_data.get('o2_concentration'),
-                temperature=processed_data.get('temperature'),
-                humidity=processed_data.get('humidity'),
-                pressure=processed_data.get('pressure'),
+                sample_temp=processed_data.get('sample_temp'),
+                sample_flow=processed_data.get('sample_flow'),
                 instrument_status=processed_data.get('status')
             )
             
@@ -210,6 +218,111 @@ class COO2Analyzer:
         
         logger.info(f"Data exported to JSON: {export_path}")
         return str(export_path)
+    
+    def start_measurement_session(self, duration_minutes: int = 10) -> str:
+        """Start a new measurement session.
+        
+        Args:
+            duration_minutes: Duration of measurement session in minutes
+            
+        Returns:
+            Path to the created measurement database
+        """
+        try:
+            session_path = self.measurement_db_manager.start_measurement_session(duration_minutes)
+            logger.info(f"Started measurement session: {session_path}")
+            return session_path
+        except Exception as e:
+            logger.error(f"Failed to start measurement session: {e}")
+            raise
+    
+    def stop_measurement_session(self) -> Optional[str]:
+        """Stop the current measurement session.
+        
+        Returns:
+            Path to the measurement database or None if no active session
+        """
+        try:
+            session_path = self.measurement_db_manager.stop_measurement_session()
+            if session_path:
+                logger.info(f"Stopped measurement session: {session_path}")
+            return session_path
+        except Exception as e:
+            logger.error(f"Failed to stop measurement session: {e}")
+            return None
+    
+    def force_stop_measurement_session(self) -> Optional[str]:
+        """Force stop any active measurement session (for cleanup).
+        
+        This method ensures that even if a session was interrupted,
+        the end_time is recorded properly.
+        
+        Returns:
+            Path to the measurement database or None if no active session
+        """
+        try:
+            session_path = self.measurement_db_manager.force_stop_measurement_session()
+            if session_path:
+                logger.info(f"Force stopped measurement session: {session_path}")
+            return session_path
+        except Exception as e:
+            logger.error(f"Failed to force stop measurement session: {e}")
+            return None
+    
+    def get_measurement_session_status(self) -> Dict[str, Any]:
+        """Get current measurement session status.
+        
+        Returns:
+            Dictionary with session status information
+        """
+        return self.measurement_db_manager.get_session_status()
+    
+    def add_measurement_to_session(self, co_concentration: float, o2_concentration: float, 
+                                  sample_temp: Optional[float] = None, sample_flow: Optional[float] = None) -> bool:
+        """Add a measurement to the current session.
+        
+        Args:
+            co_concentration: CO concentration in ppm
+            o2_concentration: O2 concentration in %
+            sample_temp: Sample temperature in °C
+            sample_flow: Sample flow rate in cc/min
+            
+        Returns:
+            True if measurement was added successfully
+        """
+        return self.measurement_db_manager.add_measurement(
+            co_concentration, o2_concentration, sample_temp, sample_flow
+        )
+    
+    def get_measurement_session_data(self, session_path: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Get measurements from a specific session.
+        
+        Args:
+            session_path: Path to the measurement database
+            limit: Maximum number of measurements to return
+            
+        Returns:
+            List of measurement dictionaries
+        """
+        return self.measurement_db_manager.get_measurements(session_path, limit)
+    
+    def list_measurement_sessions(self) -> List[Dict[str, Any]]:
+        """List all available measurement sessions.
+        
+        Returns:
+            List of session information dictionaries
+        """
+        return self.measurement_db_manager.list_measurement_sessions()
+    
+    def fix_incomplete_sessions(self) -> int:
+        """Fix sessions that don't have end_time recorded.
+        
+        This method finds sessions without end_time and sets it to the last measurement timestamp.
+        
+        Returns:
+            Number of sessions fixed
+        """
+        return self.measurement_db_manager.fix_incomplete_sessions()
     
     def close(self):
         """Clean up resources."""

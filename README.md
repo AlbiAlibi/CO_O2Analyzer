@@ -137,26 +137,75 @@ CO_O2Analyser/
 ├── src/                          # Source code
 │   └── co_o2_analyser/          # Main package
 │       ├── core/                 # Core functionality
-│       │   ├── analyzer.py       # Main analyzer class
-│       │   ├── data_processor.py # Data processing
-│       │   └── instrument_communication.py # Instrument communication
+│       │   ├── analyzer.py       # Main analyzer class (system coordinator)
+│       │   ├── CO_O2Analyser.py  # Data collection service (background process)
+│       │   ├── data_harvester.py # SQLite data harvesting from local database
+│       │   ├── data_processor.py # Data processing and validation
+│       │   └── instrument_communication.py # Instrument communication & simulation
 │       ├── data/                 # Data models
-│       │   └── models.py         # Data classes
+│       │   └── models.py         # Data classes and structures
 │       ├── gui/                  # Graphical interface
 │       │   ├── main_window.py    # Main window
 │       │   ├── plot_widget.py    # Plotting widget
 │       │   └── status_widget.py  # Status display
 │       └── utils/                # Utilities
 │           ├── config.py         # Configuration management
+│           ├── CSVharvester.py   # CSV export utilities
 │           ├── database.py       # Database operations
+│           ├── instr_simulator.py # Instrument simulation for testing
 │           └── logger.py         # Logging setup
 ├── tests/                        # Test suite
 ├── docs/                         # Documentation
 ├── examples/                     # Usage examples
-├── main.py                       # Main entry point
+├── notatki/                      # Development notes and documentation
+├── logs/                         # Application logs
+├── main.py                       # Main GUI entry point
+├── start_data_collector.py       # Data collection service entry point
+├── data.sqlite                   # SQLite database (created at runtime)
+├── analyser_status.txt           # Data collection status file
 ├── pyproject.toml               # Project configuration
 ├── requirements.txt              # Runtime dependencies
 └── README.md                     # This file
+```
+
+## 🏗️ Software Architecture
+
+### Core Components
+
+#### `analyzer.py` - System Coordinator
+The **`COO2Analyzer`** class in `analyzer.py` serves as the **central coordinator** of your CO_O2_Analyser software. It orchestrates all major operations:
+
+**Key Responsibilities:**
+- **System Orchestration**: Coordinates between instrument communication, data processing, and database storage
+- **Monitoring Management**: Controls the start/stop of continuous monitoring of the Teledyne N300M analyzer
+- **Data Collection**: Retrieves current measurements from the instrument and processes them through the data processor
+- **Database Operations**: Stores processed measurements in the SQLite database and retrieves historical data
+- **Data Export**: Provides CSV and JSON export functionality with advanced fume limit calculations
+- **Business Logic**: Implements the core application logic for measurement management
+
+**Architecture Role:**
+- Acts as the **main API layer** between the GUI and the underlying data collection infrastructure
+- Provides a **clean interface** for the main window to interact with the system
+- Handles **error management** and **logging** for all operations
+- Manages the **lifecycle** of measurement collection and storage
+
+#### Data Collection Architecture
+Your software uses a **two-process architecture**:
+
+1. **GUI Process** (`main.py`): 
+   - Runs the PyQt6 graphical interface
+   - Uses `analyzer.py` to interact with the system
+   - Displays real-time data and controls
+
+2. **Data Collection Process** (`start_data_collector.py` → `CO_O2Analyser.py`):
+   - Runs as a separate background process [[memory:7897981]]
+   - Continuously collects data from the Teledyne N300M analyzer
+   - Stores data in the local SQLite database (`data.sqlite`)
+   - Updates status in `analyser_status.txt`
+
+#### Data Flow
+```
+Teledyne N300M → CO_O2Analyser.py → data.sqlite → data_harvester.py → analyzer.py → GUI
 ```
 
 ## 🔧 Configuration

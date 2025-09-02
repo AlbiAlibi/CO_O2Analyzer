@@ -32,38 +32,32 @@ class DataProcessor:
             processed_data = {}
             
             # Process CO concentration
-            if 'coconcentration' in raw_data:
+            if 'co_concentration' in raw_data:
                 processed_data['co_concentration'] = self._validate_numeric(
-                    raw_data['coconcentration'], 'CO concentration'
+                    raw_data['co_concentration'], 'CO concentration'
                 )
             
             # Process O2 concentration
-            if 'o2concentration' in raw_data:
+            if 'o2_concentration' in raw_data:
                 processed_data['o2_concentration'] = self._validate_numeric(
-                    raw_data['o2concentration'], 'O2 concentration'
+                    raw_data['o2_concentration'], 'O2 concentration'
                 )
             
-            # Process temperature
-            if 'temperature' in raw_data:
-                processed_data['temperature'] = self._validate_numeric(
-                    raw_data['temperature'], 'temperature'
+            # Process sample temperature
+            if 'sample_temp' in raw_data:
+                processed_data['sample_temp'] = self._validate_numeric(
+                    raw_data['sample_temp'], 'sample_temp'
                 )
             
-            # Process humidity
-            if 'humidity' in raw_data:
-                processed_data['humidity'] = self._validate_numeric(
-                    raw_data['humidity'], 'humidity'
-                )
-            
-            # Process pressure
-            if 'pressure' in raw_data:
-                processed_data['pressure'] = self._validate_numeric(
-                    raw_data['pressure'], 'pressure'
+            # Process sample flow
+            if 'sample_flow' in raw_data:
+                processed_data['sample_flow'] = self._validate_numeric(
+                    raw_data['sample_flow'], 'sample_flow'
                 )
             
             # Process status
-            if 'status' in raw_data:
-                processed_data['status'] = self._validate_status(raw_data['status'])
+            if 'instrument_status' in raw_data:
+                processed_data['status'] = self._validate_status(raw_data['instrument_status'])
             
             # Add timestamp
             processed_data['timestamp'] = datetime.now().isoformat()
@@ -100,15 +94,12 @@ class DataProcessor:
             elif field_name == 'O2 concentration':
                 if not (0 <= numeric_value <= 30):  # % range (wider for various conditions)
                     self.logger.info(f"O2 concentration value: {numeric_value} (outside normal range but displaying)")
-            elif field_name == 'temperature':
-                if not (-100 <= numeric_value <= 200):  # Celsius range (wider for various conditions)
-                    self.logger.info(f"Temperature value: {numeric_value} (outside normal range but displaying)")
-            elif field_name == 'humidity':
-                if not (0 <= numeric_value <= 100):  # % range
-                    self.logger.info(f"Humidity value: {numeric_value} (outside normal range but displaying)")
-            elif field_name == 'pressure':
-                if not (600 <= numeric_value <= 1500):  # hPa range (much wider for atmospheric pressure)
-                    self.logger.info(f"Pressure value: {numeric_value} (outside normal range but displaying)")
+            elif field_name == 'sample_temp':
+                if not (-100 <= numeric_value <= 100):  # Celsius range (wider for various conditions)
+                    self.logger.info(f"Sample temperature value: {numeric_value} (outside normal range but displaying)")
+            elif field_name == 'sample_flow':
+                if not (0 <= numeric_value <= 1000):  # cc/min range
+                    self.logger.info(f"Sample flow value: {numeric_value} (outside normal range but displaying)")
             
             # Always return the real instrument value, regardless of range
             # This ensures the app displays exactly what the instrument measures
@@ -165,9 +156,8 @@ class DataProcessor:
             # Extract numeric values
             co_values = [m.co_concentration for m in measurements if m.co_concentration is not None]
             o2_values = [m.o2_concentration for m in measurements if m.o2_concentration is not None]
-            temp_values = [m.temperature for m in measurements if m.temperature is not None]
-            humidity_values = [m.humidity for m in measurements if m.humidity is not None]
-            pressure_values = [m.pressure for m in measurements if m.pressure is not None]
+            temp_values = [m.sample_temp for m in measurements if m.sample_temp is not None]
+            flow_values = [m.sample_flow for m in measurements if m.sample_flow is not None]
             
             # Calculate statistics for each parameter
             if co_values:
@@ -175,11 +165,9 @@ class DataProcessor:
             if o2_values:
                 stats['o2_concentration'] = self._calculate_numeric_stats(o2_values)
             if temp_values:
-                stats['temperature'] = self._calculate_numeric_stats(temp_values)
-            if humidity_values:
-                stats['humidity'] = self._calculate_numeric_stats(humidity_values)
-            if pressure_values:
-                stats['pressure'] = self._calculate_numeric_stats(pressure_values)
+                stats['sample_temp'] = self._calculate_numeric_stats(temp_values)
+            if flow_values:
+                stats['sample_flow'] = self._calculate_numeric_stats(flow_values)
             
             # Add count and time range
             stats['count'] = len(measurements)

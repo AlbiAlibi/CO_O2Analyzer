@@ -31,25 +31,22 @@ class SimulatedInstrumentCommunication:
             'clean_air': {
                 'co_concentration': (27.0, 28.0),      # Normal ambient air
                 'o2_concentration': (20.8, 21.0),      # Normal oxygen levels
-                'temperature': (20.0, 25.0),            # Room temperature
-                'humidity': (40.0, 60.0),              # Normal humidity
-                'pressure': (1010.0, 1020.0),          # Normal atmospheric pressure
+                'sample_temp': (20.0, 25.0),           # Room temperature
+                'sample_flow': (600.0, 800.0),         # Normal sample flow (cc/min)
                 'status': 'OK'
             },
             'industrial_exhaust': {
                 'co_concentration': (290.0, 350.0),    # High CO from oven fumes
                 'o2_concentration': (7.8, 8.0),        # Depleted oxygen
-                'temperature': (35.0, 45.0),            # Elevated temperature
-                'humidity': (20.0, 40.0),              # Lower humidity
-                'pressure': (1005.0, 1015.0),          # Slightly lower pressure
+                'sample_temp': (35.0, 45.0),           # Elevated temperature
+                'sample_flow': (600.0, 800.0),         # Slightly reduced flow
                 'status': 'WARNING - High CO'
             },
             'extreme_fumes': {
                 'co_concentration': (795.0, 905.0),    # Extreme CO - centered around 500 ppm
                 'o2_concentration': (4.8, 5.2),        # Very low oxygen - centered around 5%
-                'temperature': (50.0, 60.0),            # High temperature
-                'humidity': (15.0, 25.0),              # Very low humidity
-                'pressure': (1000.0, 1010.0),          # Lower pressure
+                'sample_temp': (50.0, 60.0),           # High temperature
+                'sample_flow': (600.0, 800.0),         # Reduced flow due to high CO
                 'status': 'CRITICAL - Extreme CO'
             }
         }
@@ -62,9 +59,8 @@ class SimulatedInstrumentCommunication:
         self.noise_levels = {
             'co_concentration': (0.1, 6.5),    # ±0.1-0.5 ppm noise
             'o2_concentration': (0.01, 1.5),  # ±0.01-0.05% noise
-            'temperature': (0.1, 0.3),         # ±0.1-0.3°C noise
-            'humidity': (0.5, 1.5),            # ±0.5-1.5% noise
-            'pressure': (0.1, 0.5)             # ±0.1-0.5 hPa noise
+            'sample_temp': (0.1, 0.3),         # ±0.1-0.3°C noise
+            'sample_flow': (1.0, 5.0)          # ±1-5 cc/min noise
         }
         
         logger.info("Initialized simulated instrument communication with industrial data")
@@ -99,9 +95,8 @@ class SimulatedInstrumentCommunication:
             "tags": [
                 {"name": "CO_Concentration", "description": "Carbon Monoxide Concentration", "unit": "ppm"},
                 {"name": "O2_Concentration", "description": "Oxygen Concentration", "unit": "%"},
-                {"name": "Temperature", "description": "Ambient Temperature", "unit": "°C"},
-                {"name": "Humidity", "description": "Relative Humidity", "unit": "%"},
-                {"name": "Pressure", "description": "Atmospheric Pressure", "unit": "hPa"},
+                {"name": "Sample_Temperature", "description": "Sample Temperature", "unit": "°C"},
+                {"name": "Sample_Flow", "description": "Sample Flow Rate", "unit": "cc/min"},
                 {"name": "Status", "description": "Instrument Status", "unit": ""}
             ]
         }
@@ -111,9 +106,8 @@ class SimulatedInstrumentCommunication:
         tag_mapping = {
             'CO_Concentration': 'co_concentration',
             'O2_Concentration': 'o2_concentration',
-            'Temperature': 'temperature',
-            'Humidity': 'humidity',
-            'Pressure': 'pressure',
+            'Sample_Temperature': 'sample_temp',
+            'Sample_Flow': 'sample_flow',
             'Status': 'status'
         }
         
@@ -139,15 +133,13 @@ class SimulatedInstrumentCommunication:
                 
                 # Ensure values stay in reasonable ranges
                 if field == 'co_concentration':
-                    value = max(0, min(1000, value))  # 0-800 ppm (allow extreme_fumes to exceed 500)
+                    value = max(0, min(1000, value))  # 0-1000 ppm (allow extreme_fumes to exceed 500)
                 elif field == 'o2_concentration':
                     value = max(3, min(25, value))   # 3-25% (allow extreme_fumes to go below 5%)
-                elif field == 'temperature':
+                elif field == 'sample_temp':
                     value = max(-10, min(70, value))  # -10 to 70°C
-                elif field == 'humidity':
-                    value = max(0, min(100, value))   # 0-100%
-                elif field == 'pressure':
-                    value = max(800, min(1200, value))  # 800-1200 hPa
+                elif field == 'sample_flow':
+                    value = max(0, min(1000, value))  # 0-1000 cc/min
         else:
             value = "Unknown"
         
@@ -168,11 +160,20 @@ class SimulatedInstrumentCommunication:
             logger.info(f"Simulation mode changed to: {current_mode}")
             self.current_mode = current_mode
         
-        for tag_name in ['CO_Concentration', 'O2_Concentration', 'Temperature', 'Humidity', 'Pressure', 'Status']:
+        for tag_name in ['CO_Concentration', 'O2_Concentration', 'Sample_Temperature', 'Sample_Flow', 'Status']:
             tag_value = self.get_tag_value(tag_name)
             if tag_value:
-                field_name = tag_name.lower().replace('_', '')
-                measurement_data[field_name] = tag_value.get('value')
+                # Map to correct field names
+                if tag_name == 'CO_Concentration':
+                    measurement_data['co_concentration'] = tag_value.get('value')
+                elif tag_name == 'O2_Concentration':
+                    measurement_data['o2_concentration'] = tag_value.get('value')
+                elif tag_name == 'Sample_Temperature':
+                    measurement_data['sample_temp'] = tag_value.get('value')
+                elif tag_name == 'Sample_Flow':
+                    measurement_data['sample_flow'] = tag_value.get('value')
+                elif tag_name == 'Status':
+                    measurement_data['instrument_status'] = tag_value.get('value')
         
         logger.debug(f"Retrieved simulated current values ({current_mode}): {measurement_data}")
         return measurement_data
@@ -208,14 +209,11 @@ class SimulatedInstrumentCommunication:
                 "o2_concentration": self._add_realistic_noise(
                     random.uniform(*mode_data['o2_concentration']), 'o2_concentration'
                 ),
-                "temperature": self._add_realistic_noise(
-                    random.uniform(*mode_data['temperature']), 'temperature'
+                "sample_temp": self._add_realistic_noise(
+                    random.uniform(*mode_data['sample_temp']), 'sample_temp'
                 ),
-                "humidity": self._add_realistic_noise(
-                    random.uniform(*mode_data['humidity']), 'humidity'
-                ),
-                "pressure": self._add_realistic_noise(
-                    random.uniform(*mode_data['pressure']), 'pressure'
+                "sample_flow": self._add_realistic_noise(
+                    random.uniform(*mode_data['sample_flow']), 'sample_flow'
                 )
             }
             data_points.append(point)
@@ -305,13 +303,13 @@ class InstrumentCommunication:
                 # Map database field names to expected format
                 mapped_data = {}
                 if 'co_conc' in measurements:
-                    mapped_data['coconcentration'] = measurements['co_conc']
+                    mapped_data['co_concentration'] = measurements['co_conc']
                 if 'o2_conc' in measurements:
-                    mapped_data['o2concentration'] = measurements['o2_conc']
+                    mapped_data['o2_concentration'] = measurements['o2_conc']
                 if 'ai_sample_temp' in measurements:
-                    mapped_data['temperature'] = measurements['ai_sample_temp']
+                    mapped_data['sample_temp'] = measurements['ai_sample_temp']
                 if 'ai_pump_flow' in measurements:
-                    mapped_data['pressure'] = measurements['ai_pump_flow']
+                    mapped_data['sample_flow'] = measurements['ai_pump_flow']
                 
                 logger.debug(f"Retrieved current values from database: {mapped_data}")
                 return mapped_data

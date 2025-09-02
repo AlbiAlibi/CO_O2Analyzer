@@ -16,9 +16,8 @@ class Measurement:
     timestamp: datetime
     co_concentration: Optional[float] = None
     o2_concentration: Optional[float] = None
-    temperature: Optional[float] = None
-    humidity: Optional[float] = None
-    pressure: Optional[float] = None
+    sample_temp: Optional[float] = None
+    sample_flow: Optional[float] = None
     instrument_status: Optional[str] = None
     error_code: Optional[int] = None
     warning_flags: Optional[list] = None

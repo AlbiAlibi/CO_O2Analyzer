@@ -212,17 +212,17 @@ class StatusWidget(QWidget):
                 self.o2_label.setStyleSheet("color: gray;")
             
             # Update temperature
-            if measurement.temperature is not None:
-                self.temp_label.setText(f"{measurement.temperature:.1f}")
-                self._set_value_color(self.temp_label, measurement.temperature, 15, 25, 35)
+            if measurement.sample_temp is not None:
+                self.temp_label.setText(f"{measurement.sample_temp:.1f}")
+                self._set_value_color(self.temp_label, measurement.sample_temp, 40, 60, 100)
             else:
                 self.temp_label.setText("--")
                 self.temp_label.setStyleSheet("color: gray;")
             
             # Update pressure
-            if measurement.pressure is not None:
-                self.pressure_label.setText(f"{measurement.pressure:.1f}")
-                self._set_value_color(self.pressure_label, measurement.pressure, 950, 1013, 1100)
+            if measurement.sample_flow is not None:
+                self.pressure_label.setText(f"{measurement.sample_flow:.1f}")
+                self._set_flow_color(self.pressure_label, measurement.sample_flow, 600, 700, 800)
             else:
                 self.pressure_label.setText("--")
                 self.pressure_label.setStyleSheet("color: gray;")
@@ -443,6 +443,25 @@ class StatusWidget(QWidget):
         
         label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 14px;")
     
+    def _set_flow_color(self, label: QLabel, value: float, low: float, mid: float, high: float):
+        """Set label color for sample flow (reversed pattern).
+        
+        Args:
+            label: Label to color
+            value: Current value
+            low: Low threshold (red below this - pipe locked)
+            mid: Mid threshold (orange between low and mid - medium flow)
+            high: High threshold (green above mid - good flow)
+        """
+        if value < low:
+            color = "red"      # < 600: pipe locked
+        elif value < mid:
+            color = "orange"   # 600-700: medium flow
+        else:
+            color = "green"    # > 700: good flow
+        
+        label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 14px;")
+    
     def _set_status_color(self, status: str):
         """Set status color based on instrument status.
         
@@ -598,7 +617,7 @@ class StatusWidget(QWidget):
                     # Use precision-based formatting (without units - shown separately)
                     formatted_temp = harvester.format_tag_value("AI_SAMPLE_TEMP", temp_value, include_units=False)
                     self.temp_label.setText(formatted_temp)
-                    self._set_value_color(self.temp_label, temp_value, 15, 25, 35)
+                    self._set_value_color(self.temp_label, temp_value, 40, 60, 100)
                 except (ValueError, TypeError):
                     self.temp_label.setText("--")
                     self.temp_label.setStyleSheet("color: gray;")
@@ -611,7 +630,7 @@ class StatusWidget(QWidget):
                     # Use precision-based formatting (without units - shown separately)
                     formatted_flow = harvester.format_tag_value("AI_PUMP_FLOW", flow_value, include_units=False)
                     self.pressure_label.setText(formatted_flow)
-                    self._set_value_color(self.pressure_label, flow_value, 950, 1013, 1100)
+                    self._set_flow_color(self.pressure_label, flow_value, 600, 700, 800)
                 except (ValueError, TypeError):
                     self.pressure_label.setText("--")
                     self.pressure_label.setStyleSheet("color: gray;")
