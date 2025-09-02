@@ -92,23 +92,26 @@ class DataProcessor:
             # Convert to float
             numeric_value = float(value)
             
-            # Check for reasonable ranges
+            # Check for reasonable ranges (only log warnings, never filter data)
+            # All real instrument values are displayed regardless of range
             if field_name == 'CO concentration':
-                if not (0 <= numeric_value <= 1000):  # ppm range
-                    self.logger.warning(f"CO concentration out of range: {numeric_value}")
+                if not (-10 <= numeric_value <= 2000):  # ppm range (wider, allows negative for calibration)
+                    self.logger.info(f"CO concentration value: {numeric_value} (outside normal range but displaying)")
             elif field_name == 'O2 concentration':
-                if not (0 <= numeric_value <= 25):  # % range
-                    self.logger.warning(f"O2 concentration out of range: {numeric_value}")
+                if not (0 <= numeric_value <= 30):  # % range (wider for various conditions)
+                    self.logger.info(f"O2 concentration value: {numeric_value} (outside normal range but displaying)")
             elif field_name == 'temperature':
-                if not (-50 <= numeric_value <= 100):  # Celsius range
-                    self.logger.warning(f"Temperature out of range: {numeric_value}")
+                if not (-100 <= numeric_value <= 200):  # Celsius range (wider for various conditions)
+                    self.logger.info(f"Temperature value: {numeric_value} (outside normal range but displaying)")
             elif field_name == 'humidity':
                 if not (0 <= numeric_value <= 100):  # % range
-                    self.logger.warning(f"Humidity out of range: {numeric_value}")
+                    self.logger.info(f"Humidity value: {numeric_value} (outside normal range but displaying)")
             elif field_name == 'pressure':
-                if not (800 <= numeric_value <= 1200):  # hPa range
-                    self.logger.warning(f"Pressure out of range: {numeric_value}")
+                if not (600 <= numeric_value <= 1500):  # hPa range (much wider for atmospheric pressure)
+                    self.logger.info(f"Pressure value: {numeric_value} (outside normal range but displaying)")
             
+            # Always return the real instrument value, regardless of range
+            # This ensures the app displays exactly what the instrument measures
             return numeric_value
             
         except (ValueError, TypeError) as e:

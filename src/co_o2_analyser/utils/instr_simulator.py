@@ -74,7 +74,7 @@ def run(db_path: str, interval: float = 2.0):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Lab-instrument DB simulator")
     parser.add_argument(
-        "db", nargs="?", default="tags.sqlite", help="SQLite file (default: tags.sqlite)"
+        "db", nargs="?", default="data.sqlite", help="SQLite file (default: data.sqlite)"
     )
     parser.add_argument(
         "-i", "--interval", type=float, default=2.0, help="Seconds between inserts (default: 2)"

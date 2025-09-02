@@ -7,8 +7,11 @@ database configuration, and user preferences.
 
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -33,14 +36,48 @@ class Config:
         """Load configuration from file."""
         default_config = {
             "instrument": {
-                "ip_address": "192.168.1.100",
+                "ip_address": "192.168.1.1",
                 "port": 8180,
                 "timeout": 30,
                 "retry_attempts": 3,
-                "simulation_mode": True  # Enable simulation mode by default
+                "simulation_mode": False,  # Enable simulation mode by default
+                "data_simulation": False,  # Enable data simulation by default
+                "tags": {
+                    "instrument_status": [
+                        "INSTRUMENT_TIME",
+                        "NETWORK_IP_ADDRESS",
+                        "OS_VERSION"
+                    ],
+                    "concentration_tags": [
+                        "CO_CONC",
+                        "O2_CONC"
+                    ],
+                    "warning_tags": [
+                        "BOX_TEMP_WARN",
+                        "BENCH_TEMP_WARN",
+                        "WHEEL_TEMP_WARN",
+                        "LOW_MEMORY_WARNING",
+                        "SYS_INVALID_CONC_WARNING",
+                        "SF_O2_SENSOR_WARN_MALFUNCTION"
+                    ],
+                    "flow_tags": [
+                        "AI_PUMP_FLOW",
+                        "PUMP_CONTROL_MODULE_STATE",
+                        "AI_SAMPLE_TEMP",
+                        "AI_SAMPLE_PRESSURE",
+                        "AI_ATMOSPHERIC_PRESSURE"
+                    ],
+                    "temperature": [
+                        "AI_SAMPLE_TEMP",
+                        "AI_DETECTOR_TEMP",
+                        "AI_BOX_TEMP",
+                        "AI_BENCH_TEMP",
+                        "AI_O2_HEATER_TEMP"
+                    ]
+                }
             },
             "database": {
-                "path": "data_store.sqlite",
+                "path": "data.sqlite",
                 "backup_interval": 3600
             },
             "gui": {
@@ -59,20 +96,37 @@ class Config:
             try:
                 with open(self.config_file, 'r') as f:
                     user_config = json.load(f)
-                    # Merge user config with defaults
-                    self._merge_configs(default_config, user_config)
+                    # Merge user config with defaults (user config takes precedence)
+                    merged_config = self._merge_configs(default_config, user_config)
+                    # Use the merged config and DON'T save it back (preserve user changes)
+                    self.config = merged_config
+                    return merged_config
             except (json.JSONDecodeError, IOError):
-                pass
-        
-        return default_config
+                # If file exists but is corrupted, create new one with defaults
+                logger.warning(f"Config file {self.config_file} is corrupted, creating new one with defaults")
+                self.config = default_config
+                self.save_config()
+                return default_config
+        else:
+            # File doesn't exist, create it with defaults
+            logger.info(f"Config file {self.config_file} not found, creating with defaults")
+            self.config = default_config
+            self.save_config()
+            return default_config
     
-    def _merge_configs(self, default: Dict[str, Any], user: Dict[str, Any]):
+    def _merge_configs(self, default: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge user configuration with defaults."""
+        import copy
+        # Create a deep copy of default to avoid modifying the original
+        merged = copy.deepcopy(default)
+        
         for key, value in user.items():
-            if key in default and isinstance(default[key], dict) and isinstance(value, dict):
-                self._merge_configs(default[key], value)
+            if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = self._merge_configs(merged[key], value)
             else:
-                default[key] = value
+                merged[key] = value
+        
+        return merged
     
     def save_config(self):
         """Save current configuration to file."""

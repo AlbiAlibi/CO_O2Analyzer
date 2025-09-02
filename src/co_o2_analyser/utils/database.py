@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Manages database operations for the application."""
     
-    def __init__(self, db_path: str = "data_store.sqlite"):
+    def __init__(self, db_path: str = "data.sqlite"):
         """Initialize database manager.
         
         Args:

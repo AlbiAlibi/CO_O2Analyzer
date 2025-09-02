@@ -21,12 +21,15 @@ from co_o2_analyser.utils.config import Config
 
 def main():
     """Main application entry point."""
-    # Setup logging
-    logger = setup_logger()
-    logger.info("Starting CO_O2_Analyser application")
-    
     # Load configuration
     config = Config()
+
+    # Setup logging (enable file logging from config)
+    logger = setup_logger(
+        level=config.get('logging.level', 'INFO'),
+        log_file=config.get('logging.file')
+    )
+    logger.info("Starting CO_O2_Analyser application")
     
     # Create Qt application
     app = QApplication(sys.argv)

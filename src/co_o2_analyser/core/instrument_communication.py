@@ -13,6 +13,7 @@ import math
 from typing import Dict, Any, Optional
 from datetime import datetime
 from ..utils.config import Config
+from .data_harvester import SQLiteDataHarvester
 
 logger = logging.getLogger(__name__)
 
@@ -239,114 +240,107 @@ class InstrumentCommunication:
             self.is_simulation = True
             logger.info("Running in simulation mode")
         else:
-            self.base_url = f"http://{config.get('instrument.ip_address')}:{config.get('instrument.port')}"
-            self.timeout = config.get('instrument.timeout', 30)
-            self.retry_attempts = config.get('instrument.retry_attempts', 3)
+            # Use SQLite data harvester for real instrument data
+            self.harvester = SQLiteDataHarvester()
             self.is_simulation = False
-            logger.info(f"Initialized communication with instrument at {self.base_url}")
+            logger.info("Running in database harvesting mode - using local SQLite data")
     
     def test_connection(self) -> bool:
-        """Test connection to the instrument."""
+        """Test connection to the instrument or database."""
         if self.is_simulation:
             return self.simulator.test_connection()
-        
-        try:
-            response = requests.get(f"{self.base_url}/api/taglist", timeout=self.timeout)
-            return response.status_code == 200
-        except requests.RequestException as e:
-            logger.error(f"Connection test failed: {e}")
-            return False
+        else:
+            # Test database connection
+            db_status = self.harvester.get_database_status()
+            return db_status.get('status') == 'connected'
     
     def get_tag_list(self) -> Optional[Dict[str, Any]]:
-        """Get list of available tags from the instrument."""
+        """Get list of available tags from the instrument or database."""
         if self.is_simulation:
             return self.simulator.get_tag_list()
-        
-        try:
-            response = requests.get(f"{self.base_url}/api/taglist", timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to get tag list: {e}")
+        else:
+            # Get tag list from database
+            db_status = self.harvester.get_database_status()
+            if db_status.get('status') == 'connected':
+                return {
+                    "tags": [
+                        {"name": "CO_CONC", "description": "Carbon Monoxide Concentration", "unit": "ppm"},
+                        {"name": "O2_CONC", "description": "Oxygen Concentration", "unit": "%"},
+                        {"name": "AI_SAMPLE_TEMP", "description": "Sample Temperature", "unit": "°C"},
+                        {"name": "AI_PUMP_FLOW", "description": "Pump Flow Rate", "unit": "cc/min"}
+                    ]
+                }
             return None
     
     def get_tag_value(self, tag_name: str) -> Optional[Dict[str, Any]]:
-        """Get value of a specific tag."""
+        """Get value of a specific tag from the instrument or database."""
         if self.is_simulation:
             return self.simulator.get_tag_value(tag_name)
-        
-        try:
-            response = requests.get(f"{self.base_url}/api/tag/{tag_name}/value", timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to get tag value for {tag_name}: {e}")
+        else:
+            # Get tag value from database
+            tag_data = self.harvester.get_latest_tag_value(tag_name)
+            if tag_data:
+                return {
+                    "value": tag_data['value'],
+                    "timestamp": tag_data['timestamp']
+                }
             return None
     
     def set_tag_value(self, tag_name: str, value: Any) -> bool:
-        """Set value of a specific tag."""
+        """Set value of a specific tag (not supported in database mode)."""
         if self.is_simulation:
             return self.simulator.set_tag_value(tag_name, value)
-        
-        try:
-            data = {"value": value}
-            response = requests.put(
-                f"{self.base_url}/api/tag/{tag_name}/value",
-                json=data,
-                timeout=self.timeout
-            )
-            response.raise_for_status()
-            logger.info(f"Set tag {tag_name} to {value}")
-            return True
-        except requests.RequestException as e:
-            logger.error(f"Failed to set tag value for {tag_name}: {e}")
+        else:
+            logger.warning(f"Setting tag values not supported in database harvesting mode: {tag_name}")
             return False
     
     def get_current_values(self) -> Optional[Dict[str, Any]]:
-        """Get current measurement values from the instrument."""
+        """Get current measurement values from the instrument or database."""
         if self.is_simulation:
             return self.simulator.get_current_values()
-        
-        try:
-            # Get tag list first
-            tag_list = self.get_tag_list()
-            if not tag_list:
-                return None
-            
-            # Get values for key measurement tags
-            measurement_data = {}
-            key_tags = ['CO_Concentration', 'O2_Concentration', 'Temperature', 'Humidity', 'Pressure', 'Status']
-            
-            for tag in key_tags:
-                tag_value = self.get_tag_value(tag)
-                if tag_value:
-                    measurement_data[tag.lower().replace('_', '')] = tag_value.get('value')
-            
-            logger.debug(f"Retrieved current values: {measurement_data}")
-            return measurement_data
-            
-        except Exception as e:
-            logger.error(f"Failed to get current values: {e}")
+        else:
+            # Get current values from database
+            measurements = self.harvester.get_latest_measurements()
+            if measurements:
+                # Map database field names to expected format
+                mapped_data = {}
+                if 'co_conc' in measurements:
+                    mapped_data['coconcentration'] = measurements['co_conc']
+                if 'o2_conc' in measurements:
+                    mapped_data['o2concentration'] = measurements['o2_conc']
+                if 'ai_sample_temp' in measurements:
+                    mapped_data['temperature'] = measurements['ai_sample_temp']
+                if 'ai_pump_flow' in measurements:
+                    mapped_data['pressure'] = measurements['ai_pump_flow']
+                
+                logger.debug(f"Retrieved current values from database: {mapped_data}")
+                return mapped_data
             return None
     
     def get_logged_data(self, start_time: Optional[str] = None, end_time: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get logged data from the instrument."""
+        """Get logged data from the instrument or database."""
         if self.is_simulation:
             return self.simulator.get_logged_data(start_time, end_time)
-        
-        try:
-            url = f"{self.base_url}/api/dataloglist"
-            params = {}
-            
-            if start_time:
-                params['start'] = start_time
-            if end_time:
-                params['end'] = end_time
-            
-            response = requests.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-            
-        except requests.RequestException as e:
-            logger.error(f"Failed to get logged data: {e}")
+        else:
+            # Get historical data from database
+            history = self.harvester.get_measurement_history(hours=24)
+            if history:
+                # Convert to expected format
+                data_points = []
+                for tag_name, measurements in history.items():
+                    for timestamp, value in measurements:
+                        data_points.append({
+                            "timestamp": timestamp.isoformat(),
+                            "tag": tag_name,
+                            "value": value
+                        })
+                
+                return {"data": data_points}
             return None
+    
+    def get_database_status(self) -> Dict[str, Any]:
+        """Get database status information."""
+        if self.is_simulation:
+            return {'status': 'simulation', 'message': 'Running in simulation mode'}
+        else:
+            return self.harvester.get_database_status()

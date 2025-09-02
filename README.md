@@ -17,6 +17,50 @@
 - **Logging & Monitoring**: Comprehensive logging and error handling
 - **Cross-platform**: Works on Windows, macOS, and Linux
 
+## 📋 TO-DO List
+
+### High Priority Improvements
+
+1. **Start Monitoring Button Enhancement**
+   - Modify "Start Monitoring" button to launch `start_data_collector.py` as a new process
+   - Ensure proper process management and cleanup
+
+2. **Data Refresh Functionality**
+   - Implement comprehensive data refresh when "Refresh" button is clicked
+   - Update all data displays, graphs, and statistics
+
+3. **Statistics Block Update Frequency**
+   - Change "Last Update" check frequency from 2 seconds to 5 minutes
+   - Update both 'warnings flags' and 'Statistics' sections
+   - Optimize performance by reducing unnecessary API calls
+
+4. **CSV Export Fix**
+   - Investigate and fix CSV export functionality
+   - Ensure proper data formatting and file generation
+
+5. **Data Collection Time Configuration**
+   - Add editable input box below graph for "start data collection" time
+   - Default value: 10 minutes
+   - Allow user to modify collection duration
+
+6. **Active Collection Visualization**
+   - Display blue line on graph when "Start Data Collection" button is active
+   - Line should persist across all "Time Range" views
+   - Visual indicator for active data collection periods
+
+7. **Dynamic Fume Limit Line**
+   - Implement dynamic Fume Limit line on CO graph
+   - Convert limit from mg/m³ to PPM CO units
+   - Real-time recalculation and display
+
+### Technical Considerations
+
+- **Process Management**: Ensure proper handling of background data collection processes
+- **Memory Management**: Optimize data handling for long-running collection sessions
+- **Error Handling**: Robust error handling for data collection interruptions
+- **Performance**: Optimize update frequencies and data processing
+- **User Experience**: Smooth transitions and clear visual feedback
+
 ## 📋 System Requirements
 
 - **Operating System**: Windows 10+, macOS 10.14+, or Linux (Ubuntu 18.04+)

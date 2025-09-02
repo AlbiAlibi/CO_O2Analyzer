@@ -1,7 +1,7 @@
 import sqlite3
 import csv
 
-DB_FILE = "tags.sqlite"
+DB_FILE = "data.sqlite"
 O2_TAG_ID = 705
 CO_TAG_ID = 398
 CSV_OUTPUT = "concentrations_last_30min.csv"

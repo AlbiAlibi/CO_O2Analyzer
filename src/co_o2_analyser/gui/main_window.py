@@ -7,6 +7,8 @@ all GUI components.
 
 import sys
 import logging
+import subprocess
+from pathlib import Path
 from typing import Optional
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -31,20 +33,25 @@ class MainWindow(QMainWindow):
     measurement_received = pyqtSignal(dict)
     connection_status_changed = pyqtSignal(bool)
     
-    def __init__(self, config: Config):
+    def __init__(self, config):
         """Initialize main window.
         
         Args:
-            config: Application configuration
+            config: Application configuration object
         """
         super().__init__()
         self.config = config
         self.analyzer = None
         self.monitoring_timer = None
+        self.data_collector_process = None
         
+        # Initialize UI
         self._init_ui()
         self._init_analyzer()
         self._setup_timers()
+        
+        # Apply configuration
+        self._apply_config()
         
         logger.info("Main window initialized")
     
@@ -125,6 +132,11 @@ class MainWindow(QMainWindow):
         self.monitor_button.clicked.connect(self._toggle_monitoring)
         toolbar.addWidget(self.monitor_button)
         
+        # Start/Stop data collection service button
+        self.data_collector_button = QPushButton("Start Data Collection")
+        self.data_collector_button.clicked.connect(self._toggle_data_collection)
+        toolbar.addWidget(self.data_collector_button)
+        
         # Refresh button
         refresh_button = QPushButton("Refresh")
         refresh_button.clicked.connect(self._refresh_data)
@@ -146,7 +158,7 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         
         # Status widget
-        self.status_widget = StatusWidget()
+        self.status_widget = StatusWidget(self.config)
         left_layout.addWidget(self.status_widget)
         
         # Add some spacing
@@ -210,6 +222,11 @@ class MainWindow(QMainWindow):
         self.connection_timer = QTimer()
         self.connection_timer.timeout.connect(self._check_connection)
         self.connection_timer.start(5000)  # Check every 5 seconds
+        
+        # Timer for data collector status updates
+        self.data_collector_timer = QTimer()
+        self.data_collector_timer.timeout.connect(self._check_data_collector_status)
+        self.data_collector_timer.start(2000)  # Check every 2 seconds
     
     def _toggle_monitoring(self):
         """Toggle monitoring on/off."""
@@ -246,6 +263,82 @@ class MainWindow(QMainWindow):
             self.analyzer.stop_monitoring()
         
         logger.info("Monitoring stopped")
+    
+    def _toggle_data_collection(self):
+        """Toggle data collection service on/off."""
+        if self.data_collector_process and self.data_collector_process.poll() is None:
+            self._stop_data_collection()
+        else:
+            self._start_data_collection()
+    
+    def _start_data_collection(self):
+        """Start the data collection service."""
+        try:
+            # Start data collection service as a subprocess
+            script_path = Path(__file__).parent.parent.parent.parent / "start_data_collector.py"
+            
+            if not script_path.exists():
+                # Try alternative path
+                script_path = Path("start_data_collector.py")
+            
+            if not script_path.exists():
+                QMessageBox.critical(self, "Error", "Data collector script not found")
+                return
+            
+            # Start the data collection service
+            self.data_collector_process = subprocess.Popen(
+                [sys.executable, str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Update UI
+            self.data_collector_button.setText("Stop Data Collection")
+            self.status_bar.showMessage("Data collection service started")
+            logger.info("Data collection service started")
+            
+            # Start monitoring timer to update status widget
+            if not self.monitoring_timer.isActive():
+                self.monitoring_timer.start(1000)
+            
+        except Exception as e:
+            logger.error(f"Failed to start data collection service: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to start data collection service: {e}")
+    
+    def _stop_data_collection(self):
+        """Stop the data collection service."""
+        try:
+            if self.data_collector_process:
+                # Terminate the process
+                self.data_collector_process.terminate()
+                
+                # Wait for it to finish
+                try:
+                    self.data_collector_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if it doesn't terminate gracefully
+                    self.data_collector_process.kill()
+                
+                self.data_collector_process = None
+            
+            # Update UI
+            self.data_collector_button.setText("Start Data Collection")
+            self.status_bar.showMessage("Data collection service stopped")
+            logger.info("Data collection service stopped")
+            
+        except Exception as e:
+            logger.error(f"Failed to stop data collection service: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to stop data collection service: {e}")
+    
+    def _check_data_collector_status(self):
+        """Check if data collection service is still running."""
+        if self.data_collector_process and self.data_collector_process.poll() is not None:
+            # Process has terminated
+            self.data_collector_button.setText("Start Data Collection")
+            self.status_bar.showMessage("Data collection service stopped unexpectedly")
+            logger.warning("Data collection service stopped unexpectedly")
+            self.data_collector_process = None
     
     def _update_data(self):
         """Update measurement data."""
