@@ -40,7 +40,7 @@ class Config:
                 "port": 8180,
                 "timeout": 30,
                 "retry_attempts": 3,
-                "simulation_mode": True,  # Enable simulation mode by default
+                "simulation_mode": False,  # Enable simulation mode by default
                 "data_simulation": False,  # Enable data simulation by default
                 "tags": {
                     "instrument_status": [
@@ -89,6 +89,13 @@ class Config:
                 "level": "INFO",
                 "file": "co_o2_analyser.log",
                 "max_size": 10485760  # 10MB
+            },
+            "data_collection": {
+                "intervals": {
+                    "all_values_interval": 300,      # 5 minutes
+                    "concentration_interval": 1.5,   # 1.5 seconds
+                    "status_check_interval": 30      # 30 seconds
+                }
             }
         }
         

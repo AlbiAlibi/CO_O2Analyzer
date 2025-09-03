@@ -206,7 +206,7 @@ class StatusWidget(QWidget):
             # Update O2 concentration
             if measurement.o2_concentration is not None:
                 self.o2_label.setText(f"{measurement.o2_concentration:.2f}")
-                self._set_value_color(self.o2_label, measurement.o2_concentration, 18, 21, 25)
+                self._set_value_color(self.o2_label, measurement.o2_concentration, 18, 22, 25)
             else:
                 self.o2_label.setText("--")
                 self.o2_label.setStyleSheet("color: gray;")

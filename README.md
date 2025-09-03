@@ -21,9 +21,11 @@
 
 ### High Priority Improvements
 
-1. **Start Monitoring Button Enhancement**
-   - Modify "Start Monitoring" button to launch `start_data_collector.py` as a new process
-   - Ensure proper process management and cleanup
+1. **✅ Start Monitoring Button Enhancement** *(COMPLETED)*
+   - ✅ Modified "Start Monitoring" button to launch `start_data_collector.py` as a new process
+   - ✅ Implemented proper process management and cleanup
+   - ✅ Added connection status monitoring from data collector to GUI
+   - ✅ GUI displays "Connected" (green) or "Disconnected" (red) based on instrument connection
 
 2. **Data Refresh Functionality**
    - Implement comprehensive data refresh when "Refresh" button is clicked
@@ -145,13 +147,13 @@ CO_O2Analyser/
 │       ├── data/                 # Data models
 │       │   └── models.py         # Data classes and structures
 │       ├── gui/                  # Graphical interface
-│       │   ├── main_window.py    # Main window
-│       │   ├── plot_widget.py    # Plotting widget
-│       │   └── status_widget.py  # Status display
+│       │   ├── main_window.py    # Main window (GUI coordinator)
+│       │   ├── plot_widget.py    # Real-time plotting widget
+│       │   └── status_widget.py  # Status display with color-coded values
 │       └── utils/                # Utilities
 │           ├── config.py         # Configuration management
 │           ├── CSVharvester.py   # CSV export utilities
-│           ├── database.py       # Database operations
+│           ├── database.py       # Database operations & measurement sessions
 │           ├── instr_simulator.py # Instrument simulation for testing
 │           └── logger.py         # Logging setup
 ├── tests/                        # Test suite
@@ -159,12 +161,16 @@ CO_O2Analyser/
 ├── examples/                     # Usage examples
 ├── notatki/                      # Development notes and documentation
 ├── logs/                         # Application logs
+├── measurements/                 # Measurement session databases
+│   └── measurement{DDmmYY}.sqlite # Session-specific databases
 ├── main.py                       # Main GUI entry point
 ├── start_data_collector.py       # Data collection service entry point
-├── data.sqlite                   # SQLite database (created at runtime)
+├── data.sqlite                   # Main SQLite database (continuous logging)
 ├── analyser_status.txt           # Data collection status file
 ├── pyproject.toml               # Project configuration
 ├── requirements.txt              # Runtime dependencies
+├── requirements-dev.txt          # Development dependencies
+├── setup.py                      # Package setup script
 └── README.md                     # This file
 ```
 
@@ -180,6 +186,7 @@ The **`COO2Analyzer`** class in `analyzer.py` serves as the **central coordinato
 - **Monitoring Management**: Controls the start/stop of continuous monitoring of the Teledyne N300M analyzer
 - **Data Collection**: Retrieves current measurements from the instrument and processes them through the data processor
 - **Database Operations**: Stores processed measurements in the SQLite database and retrieves historical data
+- **Measurement Sessions**: Manages session-specific databases with configurable duration and fume limit calculations
 - **Data Export**: Provides CSV and JSON export functionality with advanced fume limit calculations
 - **Business Logic**: Implements the core application logic for measurement management
 
@@ -208,40 +215,234 @@ Your software uses a **two-process architecture**:
 Teledyne N300M → CO_O2Analyser.py → data.sqlite → data_harvester.py → analyzer.py → GUI
 ```
 
+#### Measurement Sessions
+The system supports **session-based measurements** with the following features:
+
+- **Session-Specific Databases**: Each measurement session creates a separate database file (`measurement{DDmmYY}.sqlite`)
+- **Configurable Duration**: Default 10 minutes, user-configurable
+- **Fume Limit Calculations**: Automatic calculation of fume limits and percentage to limit for each measurement
+- **Session Management**: Start/stop sessions with proper timestamp recording
+- **Data Isolation**: Session data is separate from continuous logging data
+- **Session History**: Track all measurement sessions with metadata (start time, end time, duration, measurement count)
+
 ## 🔧 Configuration
+
+### Configuration File
+
+The application uses a JSON configuration file to manage all settings. The configuration system works with a **default configuration** in the code and a **user configuration file** that overrides the defaults.
+
+#### Configuration File Location
+
+**Default Path**: `~/.co_o2_analyser/config.json`
+
+- **Windows**: `C:\Users\{username}\.co_o2_analyser\config.json`
+- **macOS/Linux**: `/home/{username}/.co_o2_analyser/config.json`
+
+#### Configuration Priority
+
+1. **User Configuration File** - Highest priority (overrides all defaults)
+2. **Default Configuration** - Fallback values defined in `src/co_o2_analyser/utils/config.py`
+
+#### Creating Configuration File
+
+The configuration file is automatically created on first run with default values. You can also manually create it:
+
+```bash
+# The application will create the config directory and file automatically
+python main.py
+```
+
+#### Configuration Structure
+
+```json
+{
+  "instrument": {
+    "ip_address": "192.168.1.1",
+    "port": 8180,
+    "timeout": 30,
+    "retry_attempts": 3,
+    "simulation_mode": false,
+    "data_simulation": false,
+    "tags": {
+      "instrument_status": ["INSTRUMENT_TIME", "NETWORK_IP_ADDRESS", "OS_VERSION"],
+      "concentration_tags": ["CO_CONC", "O2_CONC"],
+      "warning_tags": ["BOX_TEMP_WARN", "BENCH_TEMP_WARN", "WHEEL_TEMP_WARN"],
+      "flow_tags": ["AI_PUMP_FLOW", "AI_SAMPLE_TEMP", "AI_SAMPLE_PRESSURE"],
+      "temperature": ["AI_SAMPLE_TEMP", "AI_DETECTOR_TEMP", "AI_BOX_TEMP"]
+    }
+  },
+  "database": {
+    "path": "data.sqlite",
+    "backup_interval": 3600
+  },
+  "gui": {
+    "window_width": 1920,
+    "window_height": 1009,
+    "theme": "light"
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "co_o2_analyser.log",
+    "max_size": 10485760
+  },
+  "data_collection": {
+    "intervals": {
+      "all_values_interval": 300,
+      "concentration_interval": 1.5,
+      "status_check_interval": 30
+    }
+  }
+}
+```
 
 ### Instrument Settings
 
 ```json
 {
   "instrument": {
-    "ip_address": "192.168.1.100",
+    "ip_address": "192.168.1.1",
     "port": 8180,
     "timeout": 30,
-    "retry_attempts": 3
+    "retry_attempts": 3,
+    "simulation_mode": false,
+    "data_simulation": false
   }
 }
 ```
+
+#### Key Instrument Settings
+
+- **`ip_address`**: IP address of the Teledyne N300M analyzer
+- **`port`**: HTTP port (default: 8180)
+- **`timeout`**: Request timeout in seconds
+- **`retry_attempts`**: Number of retry attempts for failed requests
+- **`simulation_mode`**: Enable/disable instrument simulation mode
+- **`data_simulation`**: Enable/disable data simulation (unused)
 
 ### Database Settings
 
 ```json
 {
   "database": {
-    "path": "data_store.sqlite",
+    "path": "data.sqlite",
     "backup_interval": 3600
   }
 }
 ```
+
+#### Key Database Settings
+
+- **`path`**: Path to the main SQLite database file
+- **`backup_interval`**: Database backup interval in seconds (3600 = 1 hour)
+
+### Data Collection Settings
+
+```json
+{
+  "data_collection": {
+    "intervals": {
+      "all_values_interval": 300,
+      "concentration_interval": 1.5,
+      "status_check_interval": 30
+    }
+  }
+}
+```
+
+#### Key Data Collection Settings
+
+- **`all_values_interval`**: Interval for collecting all instrument values (300 seconds = 5 minutes)
+- **`concentration_interval`**: Interval for collecting CO and O2 concentration data (1.5 seconds)
+- **`status_check_interval`**: Interval for checking instrument status (30 seconds)
+
+### Database Schema
+
+The system uses two types of databases:
+
+#### Main Database (`data.sqlite`)
+- **Continuous logging** of all instrument data
+- **Table**: `measurements`
+- **Fields**: `timestamp`, `co_concentration`, `o2_concentration`, `sample_temp`, `sample_flow`, `instrument_status`
+
+#### Session Databases (`measurement{DDmmYY}.sqlite`)
+- **Session-specific** measurement data
+- **Table**: `measurements` (same schema as main database)
+- **Additional fields**: `fume_limit`, `percentage_to_limit`
+- **Session metadata**: Tracked in main database `measurement_sessions` table
 
 ### GUI Settings
 
 ```json
 {
   "gui": {
-    "window_width": 1200,
-    "window_height": 800,
+    "window_width": 1920,
+    "window_height": 1009,
     "theme": "light"
+  }
+}
+```
+
+#### Key GUI Settings
+
+- **`window_width`**: Initial window width in pixels
+- **`window_height`**: Initial window height in pixels
+- **`theme`**: GUI theme (currently only "light" supported)
+
+### Logging Settings
+
+```json
+{
+  "logging": {
+    "level": "INFO",
+    "file": "co_o2_analyser.log",
+    "max_size": 10485760
+  }
+}
+```
+
+#### Key Logging Settings
+
+- **`level`**: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **`file`**: Log file name
+- **`max_size`**: Maximum log file size in bytes (10485760 = 10MB)
+
+### Configuration Management
+
+#### Editing Configuration
+
+1. **Automatic Creation**: The config file is created automatically on first run
+2. **Manual Editing**: Edit the JSON file directly with any text editor
+3. **Hot Reload**: Configuration changes require application restart
+4. **Validation**: Invalid JSON will cause the application to use default values
+
+#### Configuration Examples
+
+**Enable Simulation Mode**:
+```json
+{
+  "instrument": {
+    "simulation_mode": true
+  }
+}
+```
+
+**Change Data Collection Intervals**:
+```json
+{
+  "data_collection": {
+    "intervals": {
+      "concentration_interval": 2.0,
+      "all_values_interval": 600
+    }
+  }
+}
+```
+
+**Custom Database Path**:
+```json
+{
+  "database": {
+    "path": "custom_data.sqlite"
   }
 }
 ```

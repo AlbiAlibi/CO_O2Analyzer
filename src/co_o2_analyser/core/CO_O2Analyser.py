@@ -294,18 +294,29 @@ class InstrumentDataCollector:
             logger.info("Testing connection to instrument...")
             data = self.get_api_data(self.instrument_url)
             
+            # Connection successful
             if not self.connected:
+                # Status changed from disconnected to connected
                 self.connected = True
                 self.update_status("CONNECTED")
                 logger.info("Instrument connected successfully")
+            # If already connected, no need to update status file again
             
             return True
             
         except Exception as e:
             error_msg = f"Connection failed: {e}"
             logger.error(error_msg)
-            self.connected = False
-            self.update_status(error_msg)
+            
+            # Connection failed
+            if self.connected:
+                # Status changed from connected to disconnected
+                self.connected = False
+                self.update_status(error_msg)
+            else:
+                # Was already disconnected, just log the error
+                self.connected = False
+            
             return False
     
     def run(self):

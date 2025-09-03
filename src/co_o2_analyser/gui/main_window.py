@@ -7,6 +7,11 @@ all GUI components.
 
 import sys
 import logging
+import subprocess
+import os
+import signal
+import time
+from pathlib import Path
 
 from pathlib import Path
 from typing import Optional
@@ -15,7 +20,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QStatusBar, QMenuBar, QMenu,
     QMessageBox, QApplication, QSplitter, QInputDialog
 )
-from PyQt6.QtCore import QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QProcess, QThread
 from PyQt6.QtGui import QIcon, QAction
 
 from ..core.analyzer import COO2Analyzer
@@ -43,6 +48,10 @@ class MainWindow(QMainWindow):
         self.config = config
         self.analyzer = None
         self.monitoring_timer = None
+        
+        # Data collector process management
+        self.data_collector_process = None
+        self.data_collector_monitoring = False
         
         # Initialize UI
         self._init_ui()
@@ -225,39 +234,105 @@ class MainWindow(QMainWindow):
 
     def _toggle_monitoring(self):
         """Toggle monitoring on/off."""
-        if self.monitoring_timer.isActive():
+        if self.data_collector_monitoring:
             self._stop_monitoring()
         else:
             self._start_monitoring()
     
     def _start_monitoring(self):
-        """Start continuous monitoring."""
-        if not self.analyzer:
-            QMessageBox.warning(self, "Warning", "Analyzer not initialized")
-            return
-        
+        """Start continuous monitoring using data collector process."""
         try:
-            if self.analyzer.start_monitoring():
-                self.monitoring_timer.start(1000)  # Update every second
-                self.monitor_button.setText("Stop Monitoring")
-                self.status_bar.showMessage("Monitoring started")
-                logger.info("Monitoring started")
+            # Check if data collector is already running
+            if self.data_collector_process and self.data_collector_process.poll() is None:
+                QMessageBox.warning(self, "Warning", "Data collector is already running")
+                return
+            
+            # Get the path to start_data_collector.py
+            project_root = Path(__file__).parent.parent.parent.parent
+            collector_script = project_root / "start_data_collector.py"
+            
+            if not collector_script.exists():
+                QMessageBox.critical(self, "Error", f"Data collector script not found: {collector_script}")
+                return
+            
+            # Start the data collector process
+            logger.info(f"Starting data collector process: {collector_script}")
+            
+            # Use the virtual environment Python if available
+            venv_python = project_root / "venv" / "Scripts" / "python3.12.exe"
+            if venv_python.exists():
+                python_executable = str(venv_python)
+                logger.info(f"Using virtual environment Python: {python_executable}")
             else:
-                QMessageBox.warning(self, "Warning", "Failed to start monitoring")
+                python_executable = sys.executable
+                logger.info(f"Using system Python: {python_executable}")
+            
+            # Start the process
+            self.data_collector_process = subprocess.Popen(
+                [python_executable, str(collector_script)],
+                cwd=str(project_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # Update UI
+            self.data_collector_monitoring = True
+            self.monitor_button.setText("Stop Monitoring")
+            self.status_bar.showMessage("Data collector started")
+            
+            # Start monitoring timer for GUI updates
+            self.monitoring_timer.start(1000)  # Update every second
+            
+            # Start connection status monitoring
+            self._start_connection_monitoring()
+            
+            logger.info("Data collector process started successfully")
+            
         except Exception as e:
-            logger.error(f"Failed to start monitoring: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to start monitoring: {e}")
+            logger.error(f"Failed to start data collector: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to start data collector: {e}")
+            self.data_collector_monitoring = False
     
     def _stop_monitoring(self):
-        """Stop continuous monitoring."""
-        self.monitoring_timer.stop()
-        self.monitor_button.setText("Start Monitoring")
-        self.status_bar.showMessage("Monitoring stopped")
-        
-        if self.analyzer:
-            self.analyzer.stop_monitoring()
-        
-        logger.info("Monitoring stopped")
+        """Stop continuous monitoring and data collector process."""
+        try:
+            # Stop the data collector process
+            if self.data_collector_process and self.data_collector_process.poll() is None:
+                logger.info("Stopping data collector process...")
+                
+                # Try graceful termination first
+                self.data_collector_process.terminate()
+                
+                # Wait for process to terminate (max 5 seconds)
+                try:
+                    self.data_collector_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if it doesn't terminate gracefully
+                    logger.warning("Data collector process did not terminate gracefully, forcing kill...")
+                    self.data_collector_process.kill()
+                    self.data_collector_process.wait()
+                
+                logger.info("Data collector process stopped")
+            
+            # Update UI
+            self.data_collector_monitoring = False
+            self.monitor_button.setText("Start Monitoring")
+            self.status_bar.showMessage("Monitoring stopped")
+            
+            # Stop monitoring timer
+            self.monitoring_timer.stop()
+            
+            # Update connection status to disconnected
+            self._update_connection_status(False)
+            
+            logger.info("Monitoring stopped")
+            
+        except Exception as e:
+            logger.error(f"Failed to stop monitoring: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to stop monitoring: {e}")
     
     def _toggle_measurement_session(self):
         """Toggle measurement session on/off."""
@@ -395,19 +470,64 @@ class MainWindow(QMainWindow):
         self._update_data()
         self.status_bar.showMessage("Data refreshed", 2000)
     
+    def _start_connection_monitoring(self):
+        """Start monitoring connection status from data collector."""
+        # Check connection status every 5 seconds
+        self.connection_timer.start(5000)
+    
     def _check_connection(self):
-        """Check connection status."""
-        if not self.analyzer:
-            self.connection_label.setText("Disconnected")
-            return
-        
+        """Check connection status from data collector status file."""
         try:
-            is_connected = self.analyzer.instrument.test_connection()
-            self.connection_label.setText("Connected" if is_connected else "Disconnected")
-            self.connection_status_changed.emit(is_connected)
+            # Check if data collector process is still running
+            if not self.data_collector_process or self.data_collector_process.poll() is not None:
+                # Process has stopped
+                self._update_connection_status(False)
+                if self.data_collector_monitoring:
+                    logger.warning("Data collector process has stopped unexpectedly")
+                    self._stop_monitoring()
+                return
+            
+            # Check connection status from analyser_status.txt file
+            status_file = Path("analyser_status.txt")
+            if status_file.exists():
+                # Read the last line of the status file
+                with open(status_file, 'r') as f:
+                    lines = f.readlines()
+                    if lines:
+                        last_line = lines[-1].strip()
+                        # Check if the last status indicates connection
+                        if "CONNECTED" in last_line:
+                            self._update_connection_status(True)
+                        elif "Connection failed" in last_line or "ERROR" in last_line:
+                            self._update_connection_status(False)
+                        # If no clear status, keep current status
+            else:
+                # No status file means not connected yet
+                self._update_connection_status(False)
+                
         except Exception as e:
             logger.error(f"Connection check failed: {e}")
-            self.connection_label.setText("Error")
+            self._update_connection_status(False)
+    
+    def _update_connection_status(self, is_connected: bool):
+        """Update connection status in UI.
+        
+        Args:
+            is_connected: True if connected, False otherwise
+        """
+        if is_connected:
+            self.connection_label.setText("Connected")
+            self.connection_label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.connection_label.setText("Disconnected")
+            self.connection_label.setStyleSheet("color: red; font-weight: bold;")
+        
+        # Update status widget connection status
+        if hasattr(self, 'status_widget'):
+            self.status_widget.update_connection_status(is_connected)
+        
+        # Emit signal for other components
+        self.connection_status_changed.emit(is_connected)
     
     def _update_measurement_count(self):
         """Update measurement count display."""
@@ -450,8 +570,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event."""
         try:
-            # Stop monitoring
-            if self.monitoring_timer.isActive():
+            # Stop data collector process
+            if self.data_collector_monitoring:
                 self._stop_monitoring()
             
             # Stop measurement session if active
