@@ -25,26 +25,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.co_o2_analyser.utils.config import Config
 
-# Configure logging
-def setup_logging():
-    """Setup logging configuration for the data collection service."""
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
-    
-    log_file = log_dir / "co_o2_analyser.log"
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-    
-    return logging.getLogger(__name__)
+# Import the proper logger setup
+from src.co_o2_analyser.utils.logger import setup_logger
 
-logger = setup_logging()
+# Setup logging using the proper logger configuration
+logger = setup_logger(
+    name="src.co_o2_analyser.core.CO_O2Analyser",
+    level="INFO",
+    log_file="co_o2_analyser.log"
+)
 
 
 class InstrumentDataCollector:
@@ -58,7 +47,8 @@ class InstrumentDataCollector:
         """
         self.config = config
         self.db_file = "data.sqlite"
-        self.status_file = "analyser_status.txt"
+        # No longer using status file - connection status determined by database check
+        self.log_file = Path("co_o2_analyser.log")
         self.connected = False
         
         # Get instrument configuration
@@ -83,9 +73,12 @@ class InstrumentDataCollector:
         self.all_other_tags = list(set(self.all_other_tags) - set(self.concentration_tags))
         
         # Get data collection intervals from configuration
-        self.all_values_interval = config.get('data_collection.intervals.all_values_interval', 300)  # 5 minutes
+        self.all_values_interval = config.get('data_collection.intervals.all_values_interval', 30)  # 30 seconds
         self.concentration_interval = config.get('data_collection.intervals.concentration_interval', 1.5)  # 1.5 seconds
-        self.status_check_interval = config.get('data_collection.intervals.status_check_interval', 30)  # 0.5 minutes
+        self.status_check_interval = config.get('data_collection.intervals.status_check_interval', 6)  # 6 seconds
+        
+        # Debug: Log the actual values being used
+        logger.info(f"Config intervals - All values: {self.all_values_interval}s, Concentration: {self.concentration_interval}s, Status: {self.status_check_interval}s")
         
         logger.info(f"Initialized data collector for {self.ip_address}:{self.port}")
         logger.info(f"Batch URL: {self.instrument_url}")
@@ -93,7 +86,7 @@ class InstrumentDataCollector:
         logger.info(f"Other tags: {len(self.all_other_tags)} tags")
         logger.info(f"Intervals - All values: {self.all_values_interval}s, Concentration: {self.concentration_interval}s")
         
-        # Ensure the SQLite database and tables are created
+        # Create and verify database
         self.create_database()
     
     def create_database(self):
@@ -143,19 +136,32 @@ class InstrumentDataCollector:
             logger.error(f"Failed to verify database: {e}")
             raise
     
-    def update_status(self, status: str):
-        """Update the status file with current status.
+    # Status file no longer used - connection status determined by database check
+    
+    def check_refresh_signal(self) -> bool:
+        """Check if a refresh signal has been sent from the GUI.
         
-        Args:
-            status: Status message to write
+        Returns:
+            True if refresh signal was found and processed, False otherwise
         """
         try:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            with open(self.status_file, "a") as f:
-                f.write(f"{timestamp} - {status}\n")
-            logger.info(f"Status updated: {status}")
+            refresh_file = Path("refresh_signal.txt")
+            if refresh_file.exists():
+                logger.info("Refresh signal received - performing comprehensive data collection")
+                
+                self.collect_all_data()
+                self.collect_status_warnings_data()
+                
+                logger.info("Comprehensive data collection completed")
+                
+                # Remove the signal file
+                refresh_file.unlink()
+                return True
+                
         except Exception as e:
-            logger.error(f"Failed to update status file: {e}")
+            logger.error(f"Failed to process refresh signal: {e}")
+        
+        return False
     
     def get_api_data(self, url: str) -> dict:
         """Fetch data from the instrument API.
@@ -233,7 +239,6 @@ class InstrumentDataCollector:
             
         except Exception as e:
             logger.error(f"Failed to insert tag values: {e}")
-            self.update_status(f"ERROR: Database insert failed - {e}")
     
     def collect_all_data(self):
         """Collect all data from the instrument using batch valuelist endpoint (every all_values_interval)."""
@@ -246,7 +251,6 @@ class InstrumentDataCollector:
         except Exception as e:
             error_msg = f"Failed to collect all data: {e}"
             logger.error(error_msg)
-            self.update_status(error_msg)
     
     def collect_concentration_data(self):
         """Collect concentration data from the instrument using batch valuelist endpoint (every concentration_interval)."""
@@ -259,7 +263,6 @@ class InstrumentDataCollector:
         except Exception as e:
             error_msg = f"Failed to collect concentration data: {e}"
             logger.error(error_msg)
-            self.update_status(error_msg)
     
     def collect_status_warnings_data(self):
         """Collect status and warnings data from the instrument using batch valuelist endpoint (every status_check_interval)."""
@@ -282,7 +285,6 @@ class InstrumentDataCollector:
         except Exception as e:
             error_msg = f"Failed to collect status and warnings data: {e}"
             logger.error(error_msg)
-            self.update_status(error_msg)
     
     def connect_instrument(self) -> bool:
         """Test connection to the instrument.
@@ -298,9 +300,8 @@ class InstrumentDataCollector:
             if not self.connected:
                 # Status changed from disconnected to connected
                 self.connected = True
-                self.update_status("CONNECTED")
                 logger.info("Instrument connected successfully")
-            # If already connected, no need to update status file again
+            # If already connected, no need to log again
             
             return True
             
@@ -312,7 +313,6 @@ class InstrumentDataCollector:
             if self.connected:
                 # Status changed from connected to disconnected
                 self.connected = False
-                self.update_status(error_msg)
             else:
                 # Was already disconnected, just log the error
                 self.connected = False
@@ -344,7 +344,14 @@ class InstrumentDataCollector:
             while True:
                 current_time = time.time()
                 
-                # Collect all data every all_values_interval (default: 5 minutes)
+                # Check for refresh signals from GUI (highest priority)
+                if self.check_refresh_signal():
+                    # Reset counters to avoid immediate re-collection
+                    all_data_counter = current_time
+                    conc_counter = current_time
+                    status_warnings_counter = current_time
+                
+                # Collect all data every all_values_interval (default: 30 seconds)
                 if current_time - all_data_counter >= self.all_values_interval:
                     self.collect_all_data()
                     all_data_counter = current_time
@@ -354,7 +361,7 @@ class InstrumentDataCollector:
                     self.collect_concentration_data()
                     conc_counter = current_time
                 
-                # Collect status and warnings data every status_check_interval (default: 30 seconds)
+                # Collect status and warnings data every status_check_interval (default: 6 seconds)
                 if current_time - status_warnings_counter >= self.status_check_interval:
                     self.collect_status_warnings_data()
                     status_warnings_counter = current_time
@@ -369,26 +376,34 @@ class InstrumentDataCollector:
                 
         except KeyboardInterrupt:
             logger.info("Data collection service stopped by user")
-            self.update_status("STOPPED by user")
         except Exception as e:
             error_msg = f"Unexpected error in data collection loop: {e}"
             logger.error(error_msg)
-            self.update_status(error_msg)
             raise
 
 
 def main():
     """Main entry point for the data collection service."""
     try:
+        logger.info("Main function called - loading configuration...")
         # Load configuration
         config = Config()
+        logger.info(f"Configuration loaded from: {config.config_file}")
+        logger.info("Configuration loaded - creating data collector...")
         
         # Create and run the data collector
         collector = InstrumentDataCollector(config)
+        logger.info("Data collector created - starting run() method...")
+        
+        # Skip database verification since it's already done in start_data_collector.py
+        logger.info("Skipping database verification - already done in startup script")
         collector.run()
+        logger.info("Data collector run() method completed")
         
     except Exception as e:
         logger.error(f"Failed to start data collection service: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         sys.exit(1)
 
 

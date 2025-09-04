@@ -198,7 +198,11 @@ class MainWindow(QMainWindow):
         
         # Measurement count
         self.measurement_label = QLabel("Measurements: 0")
+        self.measurement_label.setStyleSheet("font-size: 14px; font-weight: bold;")
         self.status_bar.addPermanentWidget(self.measurement_label)
+        
+        # Session measurement counter
+        self.session_measurement_count = 0
     
     def _apply_config(self):
         """Apply configuration settings to UI."""
@@ -366,6 +370,7 @@ class MainWindow(QMainWindow):
             
             # Update UI
             self.measurement_session_button.setText("Stop Measurement Session")
+            self.measurement_session_button.setStyleSheet("color: red;")
             self.status_bar.showMessage(f"Measurement session started: {session_path}")
             logger.info(f"Measurement session started: {session_path}")
             
@@ -398,6 +403,7 @@ class MainWindow(QMainWindow):
             
             # Update UI
             self.measurement_session_button.setText("Start Measurement Session")
+            self.measurement_session_button.setStyleSheet("")  # Reset button color
             if session_path:
                 self.status_bar.showMessage(f"Measurement session completed: {session_path}")
                 logger.info(f"Measurement session completed: {session_path}")
@@ -459,6 +465,9 @@ class MainWindow(QMainWindow):
                         )
                         if success:
                             logger.debug("Added measurement to session database")
+                            # Increment session measurement counter
+                            self.session_measurement_count += 1
+                            self.measurement_label.setText(f"Measurements: {self.session_measurement_count}")
                         else:
                             logger.warning("Failed to add measurement to session database")
                 
@@ -466,9 +475,40 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to update data: {e}")
     
     def _refresh_data(self):
-        """Refresh data manually."""
-        self._update_data()
-        self.status_bar.showMessage("Data refreshed", 2000)
+        """Refresh data manually by sending signal to data collector."""
+        try:
+            # Send refresh signal to data collector process
+            if self.data_collector_monitoring and self.data_collector_process:
+                # Create refresh signal file
+                refresh_file = Path("refresh_signal.txt")
+                refresh_file.write_text("REFRESH_ALL_DATA")
+                
+                logger.info("Refresh signal sent to data collector")
+                self.status_bar.showMessage("Refresh signal sent to data collector", 2000)
+                
+                # Force immediate update of status widget
+                self._force_status_widget_refresh()
+                
+                # Schedule a delayed refresh to catch the updated data from the data collector
+                QTimer.singleShot(3000, self._force_status_widget_refresh)  # 3 seconds delay
+            else:
+                # If data collector is not running, just update from database
+                self._update_data()
+                self.status_bar.showMessage("Data refreshed from database", 2000)
+                
+        except Exception as e:
+            logger.error(f"Failed to send refresh signal: {e}")
+            self.status_bar.showMessage("Failed to refresh data", 2000)
+    
+    def _force_status_widget_refresh(self):
+        """Force a comprehensive refresh of the status widget."""
+        try:
+            if hasattr(self, 'status_widget'):
+                # Use the comprehensive refresh method
+                self.status_widget.force_comprehensive_refresh()
+                logger.info("Status widget force refreshed")
+        except Exception as e:
+            logger.error(f"Failed to force refresh status widget: {e}")
     
     def _start_connection_monitoring(self):
         """Start monitoring connection status from data collector."""
@@ -476,7 +516,7 @@ class MainWindow(QMainWindow):
         self.connection_timer.start(5000)
     
     def _check_connection(self):
-        """Check connection status from data collector status file."""
+        """Check connection status by looking at recent data in database."""
         try:
             # Check if data collector process is still running
             if not self.data_collector_process or self.data_collector_process.poll() is not None:
@@ -487,22 +527,24 @@ class MainWindow(QMainWindow):
                     self._stop_monitoring()
                 return
             
-            # Check connection status from analyser_status.txt file
-            status_file = Path("analyser_status.txt")
-            if status_file.exists():
-                # Read the last line of the status file
-                with open(status_file, 'r') as f:
-                    lines = f.readlines()
-                    if lines:
-                        last_line = lines[-1].strip()
-                        # Check if the last status indicates connection
-                        if "CONNECTED" in last_line:
-                            self._update_connection_status(True)
-                        elif "Connection failed" in last_line or "ERROR" in last_line:
-                            self._update_connection_status(False)
-                        # If no clear status, keep current status
+            # Check if we have recent data in the database (within last 5 seconds)
+            if self.analyzer and hasattr(self.analyzer, 'db_manager'):
+                try:
+                    # Get the most recent timestamp from TagValues table
+                    recent_data = self.analyzer.db_manager.get_recent_data(seconds=5)
+                    
+                    if recent_data:
+                        # We have recent data, so we're connected
+                        self._update_connection_status(True)
+                    else:
+                        # No recent data, so we're disconnected
+                        self._update_connection_status(False)
+                        
+                except Exception as e:
+                    logger.error(f"Error checking database for recent data: {e}")
+                    self._update_connection_status(False)
             else:
-                # No status file means not connected yet
+                # No analyzer available, assume disconnected
                 self._update_connection_status(False)
                 
         except Exception as e:
@@ -531,15 +573,8 @@ class MainWindow(QMainWindow):
     
     def _update_measurement_count(self):
         """Update measurement count display."""
-        if not self.analyzer:
-            return
-        
-        try:
-            measurements = self.analyzer.get_measurement_history(limit=1)
-            count = len(measurements)
-            self.measurement_label.setText(f"Measurements: {count}")
-        except Exception as e:
-            logger.error(f"Failed to update measurement count: {e}")
+        # Use session measurement counter instead of database count
+        self.measurement_label.setText(f"Measurements: {self.session_measurement_count}")
     
     def _export_data(self):
         """Export measurement data."""
@@ -567,6 +602,18 @@ class MainWindow(QMainWindow):
                          "Carbon Monoxide and Oxygen Analyzer Software\n"
                          "Designed for Teledyne N300M analyzer")
     
+    def _cleanup_signal_files(self):
+        """Clean up signal files when closing the application."""
+        try:
+            # Remove refresh signal file
+            refresh_file = Path("refresh_signal.txt")
+            if refresh_file.exists():
+                refresh_file.unlink()
+                logger.info("Removed refresh_signal.txt")
+            ata 
+        except Exception as e:
+            logger.error(f"Error cleaning up signal files: {e}")
+    
     def closeEvent(self, event):
         """Handle window close event."""
         try:
@@ -591,6 +638,9 @@ class MainWindow(QMainWindow):
             # Close analyzer
             if self.analyzer:
                 self.analyzer.close()
+            
+            # Clean up signal files
+            self._cleanup_signal_files()
             
             logger.info("Main window closed")
             event.accept()

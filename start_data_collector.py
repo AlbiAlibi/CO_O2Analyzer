@@ -19,17 +19,20 @@ from pathlib import Path
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+# Import the proper logger setup
+from co_o2_analyser.utils.logger import setup_logger
+
+# Setup logging using the proper logger configuration
+logger = setup_logger(
+    name="start_data_collector",
+    level="INFO",
+    log_file="co_o2_analyser.log"
 )
-logger = logging.getLogger(__name__)
 
 def ensure_database_exists():
     """Ensure the data.sqlite database exists and is up-to-date."""
     try:
-        logger.info("Checking if data.sqlite database exists and is up-to-date...")
+        logger.info("Checking if data.sqlite database exists and updating with fresh instrument data...")
         
         # Check if database exists
         db_path = Path("data.sqlite")
@@ -37,15 +40,14 @@ def ensure_database_exists():
             logger.info("Database not found. Creating new database with current instrument tags...")
             return create_database()
         
-        # Check if database is recent (less than 24 hours old)
-        import time
-        db_age_hours = (time.time() - db_path.stat().st_mtime) / 3600
-        if db_age_hours > 24:
-            logger.info(f"Database is {db_age_hours:.1f} hours old. Updating with current instrument tags...")
+        # Try to update the database with fresh instrument data on startup
+        logger.info("Attempting to update database with fresh instrument tag data...")
+        try:
             return create_database()
-        
-        logger.info("Database exists and is recent. Proceeding with data collection...")
-        return True
+        except Exception as e:
+            logger.warning(f"Failed to update database with fresh data: {e}")
+            logger.info("Continuing with existing database...")
+            return True  # Continue with existing database
         
     except Exception as e:
         logger.error(f"Error checking database: {e}")
@@ -53,7 +55,7 @@ def ensure_database_exists():
         return create_database()
 
 def create_database():
-    """Create/update the database using the local tag_list.json file."""
+    """Create/update the database using fresh data from instrument URL."""
     try:
         logger.info("Starting database creation/update process...")
         
@@ -66,33 +68,11 @@ def create_database():
         
         logger.info(f"Using instrument configuration: {instrument_ip}:{instrument_port}")
         
-        # Create recreator and run
+        # Create recreator and run - this will fetch from instrument URL
         recreator = DynamicDatabaseRecreator(instrument_ip, instrument_port)
         
-        # Override the fetch method to use local file
-        def fetch_from_local_file(self):
-            """Fetch tags from local JSON file instead of API."""
-            try:
-                tag_list_path = "notatki/tag_list.json"
-                if not Path(tag_list_path).exists():
-                    logger.error(f"Local tag list file not found: {tag_list_path}")
-                    return None
-                
-                import json
-                with open(tag_list_path, 'r') as f:
-                    data = json.load(f)
-                    tags = data.get('tags', [])
-                    logger.info(f"Loaded {len(tags)} tags from local file")
-                    return tags
-            except Exception as e:
-                logger.error(f"Failed to load local tag list: {e}")
-                return None
-        
-        # Replace the fetch method
-        recreator.fetch_current_taglist = lambda: fetch_from_local_file(recreator)
-        
         if recreator.recreate_database():
-            logger.info("Database created/updated successfully!")
+            logger.info("Database created/updated successfully with fresh instrument data!")
             return True
         else:
             logger.error("Failed to create/update database")
@@ -114,9 +94,9 @@ def main():
         
         # Step 1: Ensure database exists and is up-to-date
         if not ensure_database_exists():
-            print("Failed to setup database. Cannot proceed with data collection.")
-            print("Please check the logs and ensure the instrument is accessible.")
-            sys.exit(1)
+            print("Warning: Failed to update database with fresh instrument data.")
+            print("Continuing with existing database if available...")
+            # Don't exit, just continue with existing database
         
         print("Database setup completed successfully!")
         print()

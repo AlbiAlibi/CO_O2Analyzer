@@ -30,7 +30,7 @@ class COO2Analyzer:
             config: Application configuration
         """
         self.config = config
-        self.db_manager = DatabaseManager(config.get('database.path'))
+        self.db_manager = DatabaseManager(config.get('database.path', 'data.sqlite'))
         self.measurement_db_manager = MeasurementDatabaseManager()
         self.instrument = InstrumentCommunication(config)
         self.data_processor = DataProcessor()
@@ -94,8 +94,14 @@ class COO2Analyzer:
                 instrument_status=processed_data.get('status')
             )
             
-            # Store in database
-            self.db_manager.insert_measurement(measurement.to_dict())
+            # Add to current measurement session if active
+            if self.measurement_db_manager.is_collecting:
+                self.measurement_db_manager.add_measurement(
+                    measurement.co_concentration or 0.0,
+                    measurement.o2_concentration or 0.0,
+                    measurement.sample_temp,
+                    measurement.sample_flow
+                )
             
             logger.debug(f"Measurement recorded: CO={measurement.co_concentration}, O2={measurement.o2_concentration}")
             return measurement
@@ -105,7 +111,7 @@ class COO2Analyzer:
             return None
     
     def get_measurement_history(self, limit: int = 100) -> List[Measurement]:
-        """Get measurement history from database.
+        """Get measurement history from the most recent session.
         
         Args:
             limit: Maximum number of measurements to return
@@ -114,9 +120,32 @@ class COO2Analyzer:
             List of measurements
         """
         try:
-            raw_data = self.db_manager.get_measurements(limit=limit)
-            measurements = [Measurement.from_dict(data) for data in raw_data]
-            logger.debug(f"Retrieved {len(measurements)} measurements from history")
+            # Get the most recent session
+            sessions = self.measurement_db_manager.list_measurement_sessions()
+            if not sessions:
+                logger.info("No measurement sessions found")
+                return []
+            
+            # Get measurements from the most recent session
+            latest_session = sessions[0]
+            raw_data = self.measurement_db_manager.get_measurements(
+                latest_session['file_path'], limit
+            )
+            
+            # Convert to Measurement objects
+            measurements = []
+            for data in raw_data:
+                measurement = Measurement(
+                    timestamp=datetime.fromisoformat(data['timestamp']),
+                    co_concentration=data['co_concentration'],
+                    o2_concentration=data['o2_concentration'],
+                    sample_temp=data['sample_temp'],
+                    sample_flow=data['sample_flow'],
+                    instrument_status=data.get('air_quality_status', 'Unknown')
+                )
+                measurements.append(measurement)
+            
+            logger.debug(f"Retrieved {len(measurements)} measurements from latest session")
             return measurements
             
         except Exception as e:
@@ -124,31 +153,44 @@ class COO2Analyzer:
             return []
     
     def export_data(self, format: str = 'csv', start_date: Optional[datetime] = None, 
-                   end_date: Optional[datetime] = None) -> str:
+                   end_date: Optional[datetime] = None, session_path: Optional[str] = None) -> str:
         """Export measurement data to file.
         
         Args:
             format: Export format ('csv', 'json', 'excel')
             start_date: Start date for export range
             end_date: End date for export range
+            session_path: Specific session to export (if None, uses most recent)
             
         Returns:
             Path to exported file
         """
         try:
-            # Get measurements for the date range
-            measurements = self.get_measurement_history(limit=10000)  # Large limit for export
+            if session_path:
+                # Export specific session
+                raw_data = self.measurement_db_manager.get_measurements(session_path, limit=10000)
+            else:
+                # Get measurements from most recent session
+                measurements = self.get_measurement_history(limit=10000)
+                raw_data = [m.to_dict() for m in measurements]
             
-            if start_date:
-                measurements = [m for m in measurements if m.timestamp >= start_date]
-            if end_date:
-                measurements = [m for m in measurements if m.timestamp <= end_date]
+            # Filter by date range if specified
+            if start_date or end_date:
+                filtered_data = []
+                for data in raw_data:
+                    timestamp = datetime.fromisoformat(data['timestamp'])
+                    if start_date and timestamp < start_date:
+                        continue
+                    if end_date and timestamp > end_date:
+                        continue
+                    filtered_data.append(data)
+                raw_data = filtered_data
             
             # Export based on format
             if format.lower() == 'csv':
-                return self._export_to_csv(measurements)
+                return self._export_to_csv(raw_data)
             elif format.lower() == 'json':
-                return self._export_to_json(measurements)
+                return self._export_to_json(raw_data)
             else:
                 raise ValueError(f"Unsupported export format: {format}")
                 
@@ -156,7 +198,7 @@ class COO2Analyzer:
             logger.error(f"Failed to export data: {e}")
             raise
     
-    def _export_to_csv(self, measurements: List[Measurement]) -> str:
+    def _export_to_csv(self, measurements: List[Dict[str, Any]]) -> str:
         """Export measurements to CSV file."""
         import csv
         from pathlib import Path
@@ -165,56 +207,27 @@ class COO2Analyzer:
         
         with open(export_path, 'w', newline='') as csvfile:
             fieldnames = ['timestamp', 'co_concentration', 'o2_concentration', 
-                         'temperature', 'humidity', 'pressure', 'instrument_status', 'fume_limit_mg_m3', 'percentage_to_limit']
+                         'sample_temp', 'sample_flow', 'fume_limit_mg_m3', 
+                         'percentage_to_limit', 'air_quality_status']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
             writer.writeheader()
             for measurement in measurements:
-                # Calculate fume limit for each measurement
-                measurement_dict = measurement.to_dict()
-                if (measurement.co_concentration is not None and 
-                    measurement.o2_concentration is not None):
-                    
-                    # Check if this is fresh air (O2 close to 21%, CO low)
-                    if (measurement.o2_concentration >= 18.0 and 
-                        measurement.co_concentration <= 50):
-                        # Fresh air conditions - simple conversion
-                        fume_limit = measurement.co_concentration * 1.25
-                        measurement_dict['fume_limit_mg_m3'] = f"{fume_limit:.1f}"
-                    elif measurement.o2_concentration < 18.0:  # Industrial exhaust conditions
-                        # Use the full formula for exhaust fumes
-                        fume_limit = (measurement.co_concentration * 1.25 * 
-                                     ((21 - 13) / (21 - measurement.o2_concentration)))
-                        
-                        # Calculate percentage to 500 mg/m³ limit
-                        co_limit = 500.0  # mg/m³
-                        percentage_to_limit = (fume_limit / co_limit) * 100
-                        
-                        # Add both fume limit and percentage to CSV
-                        measurement_dict['fume_limit_mg_m3'] = f"{fume_limit:.1f}"
-                        measurement_dict['percentage_to_limit'] = f"{percentage_to_limit:.1f}%"
-                    else:
-                        measurement_dict['fume_limit_mg_m3'] = "--"
-                        measurement_dict['percentage_to_limit'] = "--"
-                else:
-                    measurement_dict['fume_limit_mg_m3'] = "--"
-                
-                writer.writerow(measurement_dict)
+                # Use the data as-is from the measurement database
+                writer.writerow(measurement)
         
         logger.info(f"Data exported to CSV: {export_path}")
         return str(export_path)
     
-    def _export_to_json(self, measurements: List[Measurement]) -> str:
+    def _export_to_json(self, measurements: List[Dict[str, Any]]) -> str:
         """Export measurements to JSON file."""
         import json
         from pathlib import Path
         
         export_path = Path(f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         
-        data = [measurement.to_dict() for measurement in measurements]
-        
         with open(export_path, 'w') as jsonfile:
-            json.dump(data, jsonfile, indent=2)
+            json.dump(measurements, jsonfile, indent=2)
         
         logger.info(f"Data exported to JSON: {export_path}")
         return str(export_path)

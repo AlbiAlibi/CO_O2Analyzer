@@ -520,6 +520,28 @@ class StatusWidget(QWidget):
         self.status_progress.setValue(0)
         
         logger.info("Status display cleared")
+    
+    def force_comprehensive_refresh(self):
+        """Force a comprehensive refresh of all status widget data."""
+        try:
+            logger.info("Performing comprehensive status widget refresh...")
+            
+            # Clear current display first
+            self.clear_display()
+            
+            # Update all data from database
+            self.update_units_from_database()
+            self.update_measurement_values_from_database()
+            self.update_instrument_status_sections_from_database()
+            
+            # Update fume limit calculations if we have measurement data
+            if self.current_measurement:
+                self.update_measurement(self.current_measurement)
+            
+            logger.info("Comprehensive status widget refresh completed")
+            
+        except Exception as e:
+            logger.error(f"Failed to perform comprehensive refresh: {e}")
 
     def get_fume_limit_value(self) -> Optional[float]:
         """Get the current exhaust fume limit value for export.

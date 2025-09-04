@@ -11,6 +11,7 @@ import requests
 import sqlite3
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -59,8 +60,14 @@ class DynamicDatabaseRecreator:
             return None
     
     def backup_existing_database(self):
-        """Backup the existing database if it exists."""
+        """Backup the existing database if it exists and is older than 1 hour."""
         if Path(self.db_path).exists():
+            # Only create backup if database is older than 1 hour to avoid too many backups during development
+            db_age = time.time() - Path(self.db_path).stat().st_mtime
+            if db_age < 18000:  # 5 hour in seconds
+                logger.info("Database is recent, skipping backup to avoid too many backup files")
+                return None
+                
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_path = f"tags_backup_{timestamp}.sqlite"
             
@@ -80,54 +87,59 @@ class DynamicDatabaseRecreator:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Drop existing tables if they exist
-            cursor.execute("DROP TABLE IF EXISTS TagValues")
-            cursor.execute("DROP TABLE IF EXISTS TagList")
+            # Check if database already exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='TagList'")
+            table_exists = cursor.fetchone() is not None
             
-            # Create enhanced TagList table with all metadata fields
-            cursor.execute("""
-                CREATE TABLE TagList (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    Name TEXT UNIQUE NOT NULL,
-                    Type TEXT,
-                    Value TEXT,
-                    Description TEXT,
-                    TagGroup TEXT,
-                    Units TEXT,
-                    HmiLabel TEXT,
-                    DefaultValue TEXT,
-                    RawMin REAL,
-                    RawMax REAL,
-                    EuMin REAL,
-                    EuMax REAL,
-                    EuTag TEXT,
-                    Precision INTEGER,
-                    IsValueValid BOOLEAN,
-                    IsReadOnly BOOLEAN,
-                    IsNetwork BOOLEAN,
-                    IsVisible BOOLEAN,
-                    IsNonVolatile BOOLEAN,
-                    IsDashboard BOOLEAN,
-                    CanDashboard BOOLEAN,
-                    CANNodeID INTEGER,
-                    CANDataID INTEGER,
-                    HmiValueMap TEXT,
-                    Enums TEXT,
-                    CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create TagValues table
-            cursor.execute("""
-                CREATE TABLE TagValues (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    TagName_id INTEGER NOT NULL,
-                    Value TEXT,
-                    DateTime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    Quality TEXT DEFAULT 'GOOD',
-                    FOREIGN KEY (TagName_id) REFERENCES TagList (id)
-                )
-            """)
+            if not table_exists:
+                # Create enhanced TagList table with all metadata fields
+                cursor.execute("""
+                    CREATE TABLE TagList (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Name TEXT UNIQUE NOT NULL,
+                        Type TEXT,
+                        Value TEXT,
+                        Description TEXT,
+                        TagGroup TEXT,
+                        Units TEXT,
+                        HmiLabel TEXT,
+                        DefaultValue TEXT,
+                        RawMin REAL,
+                        RawMax REAL,
+                        EuMin REAL,
+                        EuMax REAL,
+                        EuTag TEXT,
+                        Precision INTEGER,
+                        IsValueValid BOOLEAN,
+                        IsReadOnly BOOLEAN,
+                        IsNetwork BOOLEAN,
+                        IsVisible BOOLEAN,
+                        IsNonVolatile BOOLEAN,
+                        IsDashboard BOOLEAN,
+                        CanDashboard BOOLEAN,
+                        CANNodeID INTEGER,
+                        CANDataID INTEGER,
+                        HmiValueMap TEXT,
+                        Enums TEXT,
+                        CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create TagValues table
+                cursor.execute("""
+                    CREATE TABLE TagValues (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        TagName_id INTEGER NOT NULL,
+                        Value TEXT,
+                        DateTime TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        Quality TEXT DEFAULT 'GOOD',
+                        FOREIGN KEY (TagName_id) REFERENCES TagList (id)
+                    )
+                """)
+                
+                logger.info("New database structure created successfully")
+            else:
+                logger.info("Database structure already exists, will update TagList data")
             
             # Create indexes for better performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tagvalues_tagname ON TagValues(TagName_id)")
@@ -137,7 +149,7 @@ class DynamicDatabaseRecreator:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_taglist_type ON TagList(Type)")
             
             conn.commit()
-            logger.info("Enhanced database structure created successfully")
+            logger.info("Database structure ready")
             return True
             
         except Exception as e:
@@ -165,12 +177,19 @@ class DynamicDatabaseRecreator:
             return {}
     
     def populate_tag_list(self, tags):
-        """Populate the TagList table with all current tags and their metadata."""
+        """Update the TagList table with current tags and their metadata, preserving TagValues data."""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Insert all tags with their metadata
+            # Get existing tag names to track what we've processed
+            cursor.execute("SELECT Name FROM TagList")
+            existing_tags = {row[0] for row in cursor.fetchall()}
+            
+            new_tags_count = 0
+            updated_tags_count = 0
+            
+            # Process all tags from instrument
             for tag in tags:
                 try:
                     # Extract basic tag info
@@ -216,30 +235,48 @@ class DynamicDatabaseRecreator:
                     enums = properties.get('Enums', [])
                     enums_json = json.dumps(enums) if enums else ''
                     
-                    # Insert tag with all metadata
-                    cursor.execute("""
-                        INSERT INTO TagList (
-                            Name, Type, Value, Description, TagGroup, Units, HmiLabel, DefaultValue,
-                            RawMin, RawMax, EuMin, EuMax, EuTag, Precision,
-                            IsValueValid, IsReadOnly, IsNetwork, IsVisible, IsNonVolatile, IsDashboard, CanDashboard,
-                            CANNodeID, CANDataID, HmiValueMap, Enums
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        name, tag_type, value, description, tag_group, units, hmi_label, default_value,
-                        raw_min, raw_max, eu_min, eu_max, eu_tag, precision,
-                        is_value_valid, is_read_only, is_network, is_visible, is_non_volatile, is_dashboard, can_dashboard,
-                        can_node_id, can_data_id, hmi_value_map, enums_json
-                    ))
+                    if name in existing_tags:
+                        # Update existing tag metadata (preserve ID for TagValues)
+                        cursor.execute("""
+                            UPDATE TagList SET 
+                                Type = ?, Value = ?, Description = ?, TagGroup = ?, Units = ?, 
+                                HmiLabel = ?, DefaultValue = ?, RawMin = ?, RawMax = ?, EuMin = ?, 
+                                EuMax = ?, EuTag = ?, Precision = ?, IsValueValid = ?, IsReadOnly = ?, 
+                                IsNetwork = ?, IsVisible = ?, IsNonVolatile = ?, IsDashboard = ?, 
+                                CanDashboard = ?, CANNodeID = ?, CANDataID = ?, HmiValueMap = ?, Enums = ?
+                            WHERE Name = ?
+                        """, (
+                            tag_type, value, description, tag_group, units, hmi_label, default_value,
+                            raw_min, raw_max, eu_min, eu_max, eu_tag, precision,
+                            is_value_valid, is_read_only, is_network, is_visible, is_non_volatile, 
+                            is_dashboard, can_dashboard, can_node_id, can_data_id, hmi_value_map, 
+                            enums_json, name
+                        ))
+                        updated_tags_count += 1
+                    else:
+                        # Insert new tag
+                        cursor.execute("""
+                            INSERT INTO TagList (
+                                Name, Type, Value, Description, TagGroup, Units, HmiLabel, DefaultValue,
+                                RawMin, RawMax, EuMin, EuMax, EuTag, Precision,
+                                IsValueValid, IsReadOnly, IsNetwork, IsVisible, IsNonVolatile, IsDashboard, CanDashboard,
+                                CANNodeID, CANDataID, HmiValueMap, Enums
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            name, tag_type, value, description, tag_group, units, hmi_label, default_value,
+                            raw_min, raw_max, eu_min, eu_max, eu_tag, precision,
+                            is_value_valid, is_read_only, is_network, is_visible, is_non_volatile, is_dashboard, can_dashboard,
+                            can_node_id, can_data_id, hmi_value_map, enums_json
+                        ))
+                        new_tags_count += 1
+                        logger.info(f"Added new tag: {name}")
                     
-                except sqlite3.IntegrityError:
-                    # Tag already exists (shouldn't happen with fresh DB)
-                    logger.warning(f"Tag {name} already exists")
                 except Exception as e:
-                    logger.warning(f"Failed to insert tag {name}: {e}")
+                    logger.warning(f"Failed to process tag {name}: {e}")
             
             conn.commit()
-            logger.info(f"Successfully inserted {len(tags)} tags with metadata into TagList")
+            logger.info(f"Successfully updated TagList: {updated_tags_count} updated, {new_tags_count} new tags")
             return True
             
         except Exception as e:
@@ -326,40 +363,15 @@ def main():
     """Main function."""
     print("🔄 Enhanced Dynamic Database Recreation Tool")
     print("=" * 60)
-    print("This tool uses local tag_list.json to recreate the database with rich metadata")
-    print("including descriptions, ranges, units, flags, enums, and more!")
+    print("This tool fetches fresh tag data from the instrument API and updates the database")
+    print("with rich metadata including descriptions, ranges, units, flags, enums, and more!")
     print("=" * 60)
     
-    # Use local tag_list.json file
-    tag_list_path = "notatki/tag_list.json"
-    
-    if not Path(tag_list_path).exists():
-        print(f"❌ ERROR: {tag_list_path} not found!")
-        return 1
-    
-    print(f"📁 Using local tag list file: {tag_list_path}")
-    
-    # Create recreator and run
+    # Create recreator and run - fetches from instrument URL
     recreator = DynamicDatabaseRecreator("192.168.1.1", "8180")
     
-    # Override the fetch method to use local file
-    def fetch_from_local_file(self):
-        """Fetch tags from local JSON file instead of API."""
-        try:
-            with open(tag_list_path, 'r') as f:
-                data = json.load(f)
-                tags = data.get('tags', [])
-                logger.info(f"Loaded {len(tags)} tags from local file")
-                return tags
-        except Exception as e:
-            logger.error(f"Failed to load local tag list: {e}")
-            return None
-    
-    # Replace the fetch method
-    recreator.fetch_current_taglist = lambda: fetch_from_local_file(recreator)
-    
     if recreator.recreate_database():
-        print("\n✅ SUCCESS: Enhanced database has been recreated with local tag data!")
+        print("\n✅ SUCCESS: Enhanced database has been updated with fresh instrument data!")
         print("💡 Rich metadata has been extracted and stored for future use.")
         print("💡 You can now start the data collection service to begin harvesting data.")
     else:
