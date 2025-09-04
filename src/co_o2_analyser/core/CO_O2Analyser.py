@@ -55,7 +55,7 @@ class InstrumentDataCollector:
         self.ip_address = config.get('instrument.ip_address', '192.168.1.1')
         self.port = config.get('instrument.port', 8180)
         self.timeout = config.get('instrument.timeout', 30)
-        self.retry_attempts = config.get('instrument.retry_attempts', 3)
+        self.retry_attempts = config.get('instrument.retry_attempts', 10)
         
         # Construct URLs from configuration
         self.instrument_url = f"http://{self.ip_address}:{self.port}/api/valuelist"

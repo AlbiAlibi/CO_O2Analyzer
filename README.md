@@ -25,25 +25,28 @@
    - ✅ Modified "Start Monitoring" button to launch `start_data_collector.py` as a new process
    - ✅ Implemented proper process management and cleanup
    - ✅ Added connection status monitoring from data collector to GUI
-   - ✅ GUI displays "Connected" (green) or "Disconnected" (red) based on instrument connection
+   - ✅ GUI displays "Connected" (green) or "Disconnected" (red) based on data flow to database
+   - ✅ Connection status checks recent data in TagValues table (within 5 seconds) every 5 seconds
 
-2. **Data Refresh Functionality**
-   - Implement comprehensive data refresh when "Refresh" button is clicked
-   - Update all data displays, graphs, and statistics
+2. **✅ Data Refresh Functionality** *(COMPLETED)*
+   - ✅ Implemented comprehensive data refresh when "Refresh" button is clicked
+   - ✅ Uses refresh_signal.txt file to send signals to data collector process
+   - ✅ Data collector processes refresh signal and executes collect_all_data()
+   - ✅ Updates all data displays, graphs, and statistics in GUI
 
-3. **Statistics Block Update Frequency**
-   - Change "Last Update" check frequency from 2 seconds to 5 minutes
-   - Update both 'warnings flags' and 'Statistics' sections
-   - Optimize performance by reducing unnecessary API calls
+3. **✅ Statistics Block Update Frequency** *(COMPLETED)*
+   - ✅ Statistics update frequency configured via config.json (60 seconds)
+   - ✅ Both 'warnings flags' and 'Statistics' sections update with data collection
+   - ✅ Performance optimized with proper intervals (60s all data, 1.5s concentration, 10s status)
 
 4. **CSV Export Fix**
    - Investigate and fix CSV export functionality
    - Ensure proper data formatting and file generation
 
-5. **Data Collection Time Configuration**
-   - Add editable input box below graph for "start data collection" time
-   - Default value: 10 minutes
-   - Allow user to modify collection duration
+5. **✅ Data Collection Time Configuration** *(COMPLETED)*
+   - ✅ Implemented dialog box for "start data collection" time configuration
+   - ✅ Default value: 10 minutes (configurable)
+   - ✅ User can modify collection duration through measurement session dialog
 
 6. **Active Collection Visualization**
    - Display blue line on graph when "Start Data Collection" button is active
@@ -287,9 +290,9 @@ python main.py
   },
   "data_collection": {
     "intervals": {
-      "all_values_interval": 300,
+      "all_values_interval": 60,
       "concentration_interval": 1.5,
-      "status_check_interval": 30
+      "status_check_interval": 10
     }
   }
 }
@@ -341,9 +344,9 @@ python main.py
 {
   "data_collection": {
     "intervals": {
-      "all_values_interval": 300,
+      "all_values_interval": 60,
       "concentration_interval": 1.5,
-      "status_check_interval": 30
+      "status_check_interval": 10
     }
   }
 }
@@ -351,9 +354,9 @@ python main.py
 
 #### Key Data Collection Settings
 
-- **`all_values_interval`**: Interval for collecting all instrument values (300 seconds = 5 minutes)
+- **`all_values_interval`**: Interval for collecting all instrument values (60 seconds = 1 minute)
 - **`concentration_interval`**: Interval for collecting CO and O2 concentration data (1.5 seconds)
-- **`status_check_interval`**: Interval for checking instrument status (30 seconds)
+- **`status_check_interval`**: Interval for checking instrument status (10 seconds)
 
 ### Database Schema
 

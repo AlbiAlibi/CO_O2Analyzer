@@ -30,6 +30,10 @@ class PlotWidget(QWidget):
         self.measurements: List[Measurement] = []
         self.max_points = 1000  # Maximum number of points to display
         
+        # Measurement session tracking
+        self.measurement_sessions = []  # List of (start_time, end_time, session_number)
+        self.current_session_number = 0
+        
         self._init_ui()
         self._setup_plot()
         
@@ -130,6 +134,27 @@ class PlotWidget(QWidget):
         except Exception as e:
             logger.error(f"Failed to add measurement: {e}")
     
+    def start_measurement_session(self):
+        """Mark the start of a new measurement session."""
+        try:
+            self.current_session_number += 1
+            start_time = datetime.now()
+            self.measurement_sessions.append((start_time, None, self.current_session_number))
+            logger.info(f"Started measurement session #{self.current_session_number} at {start_time}")
+        except Exception as e:
+            logger.error(f"Failed to start measurement session: {e}")
+    
+    def stop_measurement_session(self):
+        """Mark the end of the current measurement session."""
+        try:
+            if self.measurement_sessions and self.measurement_sessions[-1][1] is None:
+                end_time = datetime.now()
+                start_time, _, session_number = self.measurement_sessions[-1]
+                self.measurement_sessions[-1] = (start_time, end_time, session_number)
+                logger.info(f"Stopped measurement session #{session_number} at {end_time}")
+        except Exception as e:
+            logger.error(f"Failed to stop measurement session: {e}")
+    
     def _update_plot(self):
         """Update the plot with current data."""
         if not self.measurements:
@@ -221,6 +246,9 @@ class PlotWidget(QWidget):
             self.co_line.set_data(valid_times, valid_co)
             self.o2_line.set_data(valid_times, valid_o2)
             
+            # Draw measurement session markers
+            self._draw_measurement_markers()
+            
             # Auto-scale axes
             self.ax1.relim()
             self.ax1.autoscale_view()
@@ -233,9 +261,130 @@ class PlotWidget(QWidget):
         except Exception as e:
             logger.error(f"Failed to update plot with data: {e}")
     
+    def _draw_measurement_markers(self):
+        """Draw measurement session markers on both plots."""
+        try:
+            # Clear existing markers
+            for ax in [self.ax1, self.ax2]:
+                # Remove existing vertical lines and text
+                for line in ax.lines[:]:
+                    if hasattr(line, '_is_measurement_marker'):
+                        line.remove()
+                for text in ax.texts[:]:
+                    if hasattr(text, '_is_measurement_marker'):
+                        text.remove()
+            
+            if not self.measurement_sessions:
+                return
+            
+            # Get current time range for filtering
+            current_range = self.time_range_combo.currentText()
+            now = datetime.now()
+            if current_range == "1 min":
+                cutoff_time = now - timedelta(minutes=1)
+            elif current_range == "5 min":
+                cutoff_time = now - timedelta(minutes=5)
+            elif current_range == "10 min":
+                cutoff_time = now - timedelta(minutes=10)
+            elif current_range == "30 min":
+                cutoff_time = now - timedelta(minutes=30)
+            elif current_range == "1 hour":
+                cutoff_time = now - timedelta(hours=1)
+            elif current_range == "3 hours":
+                cutoff_time = now - timedelta(hours=3)
+            else:
+                cutoff_time = now - timedelta(hours=1)
+            
+            # Draw markers for each session - only if ANY part of the session is within range
+            for start_time, end_time, session_number in self.measurement_sessions:
+                # Check if session overlaps with current time range
+                session_end = end_time if end_time else now
+                
+                # Session overlaps if:
+                # 1. Session starts within the current range, OR
+                # 2. Session ends within the current range, OR  
+                # 3. Session completely encompasses the current range
+                session_overlaps = (
+                    (start_time >= cutoff_time and start_time <= now) or  # Start within range
+                    (session_end >= cutoff_time and session_end <= now) or  # End within range
+                    (start_time <= cutoff_time and session_end >= now)  # Session encompasses range
+                )
+                
+                if session_overlaps:
+                    self._draw_session_markers(start_time, end_time, session_number)
+                    
+        except Exception as e:
+            logger.error(f"Failed to draw measurement markers: {e}")
+    
+    def _draw_session_markers(self, start_time, end_time, session_number):
+        """Draw markers for a single measurement session.
+        
+        Args:
+            start_time: Start time of the session
+            end_time: End time of the session (None if ongoing)
+            session_number: Session number
+        """
+        try:
+            # Get current time range for clipping
+            current_range = self.time_range_combo.currentText()
+            now = datetime.now()
+            if current_range == "1 min":
+                cutoff_time = now - timedelta(minutes=1)
+            elif current_range == "5 min":
+                cutoff_time = now - timedelta(minutes=5)
+            elif current_range == "10 min":
+                cutoff_time = now - timedelta(minutes=10)
+            elif current_range == "30 min":
+                cutoff_time = now - timedelta(minutes=30)
+            elif current_range == "1 hour":
+                cutoff_time = now - timedelta(hours=1)
+            elif current_range == "3 hours":
+                cutoff_time = now - timedelta(hours=3)
+            else:
+                cutoff_time = now - timedelta(hours=1)
+            
+            # Get y-axis limits for both plots
+            y1_min, y1_max = self.ax1.get_ylim()
+            y2_min, y2_max = self.ax2.get_ylim()
+            
+            # Only draw start marker if it's within the visible time range
+            if start_time >= cutoff_time and start_time <= now:
+                for ax, y_min, y_max in [(self.ax1, y1_min, y1_max), (self.ax2, y2_min, y2_max)]:
+                    start_line = ax.axvline(x=start_time, color='blue', linestyle=':', linewidth=1, alpha=0.7)
+                    start_line._is_measurement_marker = True
+                    
+                    # Add session number text at the top
+                    text = ax.text(start_time, y_max * 0.95, f"#{session_number}", 
+                                 color='blue', fontsize=8, ha='center', va='top')
+                    text._is_measurement_marker = True
+            
+            # Only draw end marker if it's within the visible time range
+            if end_time and end_time >= cutoff_time and end_time <= now:
+                for ax, y_min, y_max in [(self.ax1, y1_min, y1_max), (self.ax2, y2_min, y2_max)]:
+                    end_line = ax.axvline(x=end_time, color='red', linestyle=':', linewidth=1, alpha=0.7)
+                    end_line._is_measurement_marker = True
+                    
+                    # Add session number text at the top
+                    text = ax.text(end_time, y_max * 0.95, f"#{session_number}", 
+                                 color='red', fontsize=8, ha='center', va='top')
+                    text._is_measurement_marker = True
+                    
+                    # Draw horizontal connecting line (black) only if both start and end are visible
+                    if start_time >= cutoff_time and start_time <= now and start_time != end_time:
+                        for ax, y_min, y_max in [(self.ax1, y1_min, y1_max), (self.ax2, y2_min, y2_max)]:
+                            # Draw horizontal line at the top
+                            h_line = ax.plot([start_time, end_time], [y_max * 0.9, y_max * 0.9], 
+                                           color='green', linewidth=1, alpha=0.5)[0]
+                            h_line._is_measurement_marker = True
+                            
+        except Exception as e:
+            logger.error(f"Failed to draw session markers: {e}")
+    
     def clear_plot(self):
         """Clear all data from the plot."""
         self.measurements.clear()
+        self.measurement_sessions.clear()
+        self.current_session_number = 0
         self.co_line.set_data([], [])
         self.o2_line.set_data([], [])
         self.canvas.draw()

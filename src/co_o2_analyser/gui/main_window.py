@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         # Data collector process management
         self.data_collector_process = None
         self.data_collector_monitoring = False
+        self.data_collector_start_time = None  # Track when data collector started
         
         # Initialize UI
         self._init_ui()
@@ -275,15 +276,14 @@ class MainWindow(QMainWindow):
             self.data_collector_process = subprocess.Popen(
                 [python_executable, str(collector_script)],
                 cwd=str(project_root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                universal_newlines=True
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
             )
             
             # Update UI
             self.data_collector_monitoring = True
+            self.data_collector_start_time = time.time()  # Record start time
             self.monitor_button.setText("Stop Monitoring")
             self.status_bar.showMessage("Data collector started")
             
@@ -323,6 +323,7 @@ class MainWindow(QMainWindow):
             
             # Update UI
             self.data_collector_monitoring = False
+            self.data_collector_start_time = None  # Reset start time
             self.monitor_button.setText("Start Monitoring")
             self.status_bar.showMessage("Monitoring stopped")
             
@@ -368,6 +369,9 @@ class MainWindow(QMainWindow):
             # Start the measurement session
             session_path = self.analyzer.start_measurement_session(duration)
             
+            # Notify plot widget about measurement session start
+            self.plot_widget.start_measurement_session()
+            
             # Update UI
             self.measurement_session_button.setText("Stop Measurement Session")
             self.measurement_session_button.setStyleSheet("color: red;")
@@ -395,6 +399,9 @@ class MainWindow(QMainWindow):
             
             # Stop the measurement session
             session_path = self.analyzer.stop_measurement_session()
+            
+            # Notify plot widget about measurement session stop
+            self.plot_widget.stop_measurement_session()
             
             # Stop the auto-stop timer
             if hasattr(self, 'measurement_timer') and self.measurement_timer:
@@ -525,6 +532,12 @@ class MainWindow(QMainWindow):
                 if self.data_collector_monitoring:
                     logger.warning("Data collector process has stopped unexpectedly")
                     self._stop_monitoring()
+                return
+            
+            # Give data collector time to start up (30 seconds grace period)
+            if self.data_collector_start_time and (time.time() - self.data_collector_start_time) < 30:
+                # Still in grace period, assume connected if process is running
+                self._update_connection_status(True)
                 return
             
             # Check if we have recent data in the database (within last 5 seconds)
