@@ -159,6 +159,59 @@ pip install -e .
 co-o2-analyser
 ```
 
+### Installing as a Python Module
+
+1. **Install from source:**
+   ```bash
+   # Clone the repository
+   git clone https://github.com/yourusername/CO_O2Analyser.git
+   cd CO_O2Analyser
+   
+   # Create virtual environment
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   
+   # Install the module
+   pip install -e .
+   ```
+
+2. **Install dependencies only:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Test the installation:**
+   ```bash
+   python test_module.py
+   ```
+
+4. **Run the application:**
+   ```bash
+   # GUI application
+   python -m co_o2_analyser
+   
+   # Or use the entry point
+   co-o2-analyser
+   
+   # Data collector service
+   python start_data_collector.py
+   ```
+
+### Creating Standalone Executable
+
+```bash
+# Using the build script
+python build.py exe
+
+# Or manually with PyInstaller
+pip install pyinstaller
+pyinstaller --onefile --windowed main.py
+
+# Or with cx_Freeze
+pip install cx_Freeze
+python setup_cx_freeze.py build
+```
+
 ### Configuration
 
 1. **Edit configuration**: The application will create a default configuration file
