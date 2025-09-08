@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from dataclasses import asdict
+from pathlib import Path
 
 from ..data.models import Measurement
 from ..utils.config import Config
@@ -198,23 +199,174 @@ class COO2Analyzer:
             logger.error(f"Failed to export data: {e}")
             raise
     
+    def export_measurement_session(self, session_path: str, format: str = 'csv') -> str:
+        """Export data from a specific measurement session.
+        
+        Args:
+            session_path: Path to the measurement session database
+            format: Export format ('csv', 'json')
+            
+        Returns:
+            Path to exported file
+        """
+        try:
+            # Get session metadata to create a meaningful filename
+            session_metadata = self._get_session_metadata(session_path)
+            
+            # Get measurements from the session
+            raw_data = self.measurement_db_manager.get_measurements(session_path, limit=10000)
+            
+            if not raw_data:
+                raise ValueError(f"No data found in session: {session_path}")
+            
+            # Create results directory if it doesn't exist
+            results_dir = Path("results")
+            results_dir.mkdir(exist_ok=True)
+            
+            # Create filename with session date and time
+            session_date = session_metadata.get('start_time', datetime.now().strftime('%Y%m%d_%H%M%S'))
+            if isinstance(session_date, str):
+                session_date = datetime.fromisoformat(session_date)
+            
+            filename = f"measurement_{session_date.strftime('%Y%m%d_%H%M%S')}.{format}"
+            export_path = results_dir / filename
+            
+            # Export based on format
+            if format.lower() == 'csv':
+                return self._export_session_to_csv(raw_data, export_path, session_metadata)
+            elif format.lower() == 'json':
+                return self._export_session_to_json(raw_data, export_path, session_metadata)
+            else:
+                raise ValueError(f"Unsupported export format: {format}")
+                
+        except Exception as e:
+            logger.error(f"Failed to export measurement session: {e}")
+            raise
+    
+    def _get_session_metadata(self, session_path: str) -> Dict[str, Any]:
+        """Get metadata for a measurement session.
+        
+        Args:
+            session_path: Path to the measurement session database
+            
+        Returns:
+            Dictionary with session metadata
+        """
+        try:
+            import sqlite3
+            conn = sqlite3.connect(session_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT start_time, end_time, duration_seconds, total_measurements
+                FROM session_metadata 
+                ORDER BY id DESC 
+                LIMIT 1
+            """)
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return {
+                    'start_time': row[0],
+                    'end_time': row[1],
+                    'duration_seconds': row[2],
+                    'total_measurements': row[3]
+                }
+            else:
+                return {}
+                
+        except Exception as e:
+            logger.warning(f"Failed to get session metadata: {e}")
+            return {}
+    
+    def _export_session_to_csv(self, measurements: List[Dict[str, Any]], export_path: Path, 
+                              session_metadata: Dict[str, Any]) -> str:
+        """Export session measurements to CSV file with metadata header."""
+        import csv
+        
+        with open(export_path, 'w', newline='') as csvfile:
+            # Write session metadata as comments at the top
+            csvfile.write("# Measurement Session Export\n")
+            csvfile.write(f"# Session Start: {session_metadata.get('start_time', 'Unknown')}\n")
+            csvfile.write(f"# Session End: {session_metadata.get('end_time', 'Unknown')}\n")
+            csvfile.write(f"# Duration: {session_metadata.get('duration_seconds', 'Unknown')} seconds\n")
+            csvfile.write(f"# Total Measurements: {session_metadata.get('total_measurements', 'Unknown')}\n")
+            csvfile.write("#\n")
+            
+            # Include all possible fields from Measurement model
+            fieldnames = ['timestamp', 'co_concentration', 'o2_concentration', 
+                         'sample_temp', 'sample_flow', 'fume_limit_mg_m3', 
+                         'percentage_to_limit', 'air_quality_status', 'instrument_status',
+                         'error_code', 'warning_flags']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for measurement in measurements:
+                # Filter out None values and convert lists to strings for CSV
+                filtered_measurement = {}
+                for key, value in measurement.items():
+                    if value is not None:
+                        if isinstance(value, list):
+                            filtered_measurement[key] = str(value)
+                        else:
+                            filtered_measurement[key] = value
+                
+                # Write only the fields that exist in the measurement
+                writer.writerow(filtered_measurement)
+        
+        logger.info(f"Session data exported to CSV: {export_path}")
+        return str(export_path)
+    
+    def _export_session_to_json(self, measurements: List[Dict[str, Any]], export_path: Path,
+                               session_metadata: Dict[str, Any]) -> str:
+        """Export session measurements to JSON file with metadata."""
+        import json
+        
+        export_data = {
+            'session_metadata': session_metadata,
+            'measurements': measurements
+        }
+        
+        with open(export_path, 'w') as jsonfile:
+            json.dump(export_data, jsonfile, indent=2, default=str)
+        
+        logger.info(f"Session data exported to JSON: {export_path}")
+        return str(export_path)
+    
     def _export_to_csv(self, measurements: List[Dict[str, Any]]) -> str:
         """Export measurements to CSV file."""
         import csv
         from pathlib import Path
         
-        export_path = Path(f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        # Create results directory if it doesn't exist
+        results_dir = Path("results")
+        results_dir.mkdir(exist_ok=True)
+        
+        export_path = results_dir / f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         
         with open(export_path, 'w', newline='') as csvfile:
+            # Include all possible fields from Measurement model
             fieldnames = ['timestamp', 'co_concentration', 'o2_concentration', 
                          'sample_temp', 'sample_flow', 'fume_limit_mg_m3', 
-                         'percentage_to_limit', 'air_quality_status']
+                         'percentage_to_limit', 'air_quality_status', 'instrument_status',
+                         'error_code', 'warning_flags']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
             writer.writeheader()
             for measurement in measurements:
-                # Use the data as-is from the measurement database
-                writer.writerow(measurement)
+                # Filter out None values and convert lists to strings for CSV
+                filtered_measurement = {}
+                for key, value in measurement.items():
+                    if value is not None:
+                        if isinstance(value, list):
+                            filtered_measurement[key] = str(value)
+                        else:
+                            filtered_measurement[key] = value
+                
+                # Write only the fields that exist in the measurement
+                writer.writerow(filtered_measurement)
         
         logger.info(f"Data exported to CSV: {export_path}")
         return str(export_path)

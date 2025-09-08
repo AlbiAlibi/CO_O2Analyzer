@@ -64,7 +64,7 @@ Repository = "https://github.com/yourusername/co-o2-analyser.git"
 "Bug Tracker" = "https://github.com/yourusername/co-o2-analyser/issues"
 
 [project.scripts]
-co-o2-analyser = "co_o2_analyser.main:main"
+co-o2-analyser = "co_o2_analyser.gui.main_window:main"
 
 [project.gui-scripts]
 co-o2-analyser-gui = "co_o2_analyser.gui.main_window:main"

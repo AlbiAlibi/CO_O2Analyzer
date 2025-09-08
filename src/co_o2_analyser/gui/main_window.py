@@ -27,6 +27,8 @@ from ..core.analyzer import COO2Analyzer
 from ..utils.config import Config
 from .plot_widget import PlotWidget
 from .status_widget import StatusWidget
+from .instrument_management_dialog import InstrumentManagementDialog
+from .settings_dialog import SettingsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -105,13 +107,13 @@ class MainWindow(QMainWindow):
         file_menu = menubar.addMenu("&File")
         
         # Export action
-        export_action = QAction("&Export Data", self)
+        export_action = QAction("💾 &Export Data", self)
         export_action.setShortcut("Ctrl+E")
         export_action.triggered.connect(self._export_data)
         file_menu.addAction(export_action)
         
         # Exit action
-        exit_action = QAction("E&xit", self)
+        exit_action = QAction("❌ E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
@@ -120,9 +122,14 @@ class MainWindow(QMainWindow):
         tools_menu = menubar.addMenu("&Tools")
         
         # Settings action
-        settings_action = QAction("&Settings", self)
+        settings_action = QAction("⚙️ &App Settings", self)
         settings_action.triggered.connect(self._show_settings)
         tools_menu.addAction(settings_action)
+        
+        # Instrument Settings action
+        instrument_settings_action = QAction("🔧 &Instrument Settings", self)
+        instrument_settings_action.triggered.connect(self._show_instrument_management)
+        tools_menu.addAction(instrument_settings_action)
         
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -590,23 +597,148 @@ class MainWindow(QMainWindow):
         self.measurement_label.setText(f"Measurements: {self.session_measurement_count}")
     
     def _export_data(self):
-        """Export measurement data."""
+        """Export data from all measurement sessions to CSV files."""
         if not self.analyzer:
             QMessageBox.warning(self, "Warning", "Analyzer not initialized")
             return
         
         try:
-            # TODO: Add export dialog for format and date range selection
-            export_path = self.analyzer.export_data(format='csv')
-            QMessageBox.information(self, "Export Complete", f"Data exported to: {export_path}")
+            # Get list of all measurement sessions
+            sessions = self.analyzer.list_measurement_sessions()
+            
+            if not sessions:
+                QMessageBox.information(self, "No Data", "No measurement sessions found to export")
+                return
+            
+            # Export each session to a separate CSV file
+            exported_files = []
+            for session in sessions:
+                try:
+                    export_path = self.analyzer.export_measurement_session(
+                        session['file_path'], format='csv'
+                    )
+                    exported_files.append(export_path)
+                    logger.info(f"Exported session: {session['file_path']} -> {export_path}")
+                except Exception as e:
+                    logger.error(f"Failed to export session {session['file_path']}: {e}")
+                    continue
+            
+            if exported_files:
+                message = f"Successfully exported {len(exported_files)} measurement sessions to the 'results' folder:\n\n"
+                for file_path in exported_files:
+                    message += f"• {file_path}\n"
+                QMessageBox.information(self, "Export Complete", message)
+            else:
+                QMessageBox.warning(self, "Export Failed", "No sessions could be exported")
+                
         except Exception as e:
             logger.error(f"Export failed: {e}")
             QMessageBox.critical(self, "Export Error", f"Failed to export data: {e}")
     
     def _show_settings(self):
         """Show settings dialog."""
-        # TODO: Implement settings dialog
-        QMessageBox.information(self, "Settings", "Settings dialog not yet implemented")
+        try:
+            # Get config path from config object or use default
+            config_path = getattr(self.config, 'config_path', None)
+            if not config_path:
+                # Try to find config file in common locations
+                possible_paths = [
+                    Path.home() / ".co_o2_analyser" / "config.json",
+                    Path.cwd() / "config.json",
+                    Path("config.json")
+                ]
+                
+                for path in possible_paths:
+                    if path.exists():
+                        config_path = str(path)
+                        break
+                else:
+                    # Use default location
+                    config_path = str(Path.home() / ".co_o2_analyser" / "config.json")
+            
+            dialog = SettingsDialog(config_path, self)
+            dialog.settings_changed.connect(self._on_settings_changed)
+            dialog.exec()
+            
+        except Exception as e:
+            logger.error(f"Error showing settings dialog: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open settings dialog:\n{str(e)}")
+    
+    def _on_settings_changed(self, new_config: dict):
+        """Handle settings changes."""
+        try:
+            logger.info("Settings changed, updating configuration...")
+            
+            # Update config object if it exists
+            if self.config:
+                # Update config with new values
+                for section, values in new_config.items():
+                    if hasattr(self.config, section):
+                        for key, value in values.items():
+                            self.config.set(f"{section}.{key}", value)
+                
+                # Save config
+                self.config.save_config()
+                logger.info("Configuration updated and saved")
+            
+            # Show notification
+            self.statusBar().showMessage("Settings updated successfully", 5000)
+            
+            # Optionally restart analyzer with new settings
+            if self.analyzer:
+                reply = QMessageBox.question(
+                    self,
+                    "Restart Required",
+                    "Some settings changes require restarting the analyzer.\nDo you want to restart now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._restart_analyzer()
+            
+        except Exception as e:
+            logger.error(f"Error handling settings changes: {e}")
+            QMessageBox.warning(self, "Settings Update", f"Settings were saved but some updates failed:\n{str(e)}")
+    
+    def _restart_analyzer(self):
+        """Restart the analyzer with new settings."""
+        try:
+            if self.analyzer:
+                self.analyzer.close()
+                self.analyzer = None
+            
+            # Reinitialize analyzer with new config
+            self.analyzer = COO2Analyzer(self.config)
+            self.analyzer.measurement_received.connect(self._on_measurement_received)
+            self.analyzer.connection_status_changed.connect(self._on_connection_status_changed)
+            
+            logger.info("Analyzer restarted with new settings")
+            self.statusBar().showMessage("Analyzer restarted with new settings", 3000)
+            
+        except Exception as e:
+            logger.error(f"Error restarting analyzer: {e}")
+            QMessageBox.critical(self, "Restart Error", f"Failed to restart analyzer:\n{str(e)}")
+    
+    def _show_instrument_management(self):
+        """Show instrument management dialog."""
+        try:
+            dialog = InstrumentManagementDialog(self)
+            dialog.operation_completed.connect(self._on_instrument_operation_completed)
+            dialog.exec()
+        except Exception as e:
+            logger.error(f"Error showing instrument management dialog: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open instrument management dialog:\n{str(e)}")
+    
+    def _on_instrument_operation_completed(self, operation_name: str, success: bool):
+        """Handle instrument operation completion."""
+        status = "successful" if success else "failed"
+        logger.info(f"Instrument operation '{operation_name}' {status}")
+        
+        # Update status bar or show notification
+        if success:
+            self.statusBar().showMessage(f"Instrument operation '{operation_name}' completed successfully", 5000)
+        else:
+            self.statusBar().showMessage(f"Instrument operation '{operation_name}' failed", 5000)
     
     def _show_about(self):
         """Show about dialog."""
@@ -623,12 +755,46 @@ class MainWindow(QMainWindow):
             if refresh_file.exists():
                 refresh_file.unlink()
                 logger.info("Removed refresh_signal.txt")
-            ata 
         except Exception as e:
             logger.error(f"Error cleaning up signal files: {e}")
     
-    def closeEvent(self, event):
-        """Handle window close event."""
+    def _shutdown_instrument_on_exit(self):
+        """Shutdown the instrument when exiting the application."""
+        try:
+            logger.info("Shutting down instrument on application exit...")
+            
+            # Stop data collector first
+            if self.data_collector_monitoring:
+                self._stop_monitoring()
+            
+            # Send shutdown command to instrument
+            import requests
+            instrument_ip = "192.168.1.1"
+            instrument_port = "8180"
+            api_base = f"http://{instrument_ip}:{instrument_port}/api"
+            
+            response = requests.put(
+                f"{api_base}/tag/INSTRUMENT_SHUTDOWN_CONTROL/value",
+                json={"value": "SHUTDOWN"},
+                timeout=5
+            )
+            
+            if response.status_code == 200:
+                logger.info("Shutdown command sent to instrument successfully")
+                return True
+            else:
+                logger.error(f"Failed to send shutdown command: {response.status_code}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            logger.warning("Cannot connect to instrument for shutdown")
+            return False
+        except Exception as e:
+            logger.error(f"Error during instrument shutdown: {e}")
+            return False
+    
+    def _perform_cleanup(self):
+        """Perform all cleanup operations."""
         try:
             # Stop data collector process
             if self.data_collector_monitoring:
@@ -655,9 +821,72 @@ class MainWindow(QMainWindow):
             # Clean up signal files
             self._cleanup_signal_files()
             
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+    
+    def closeEvent(self, event):
+        """Handle window close event."""
+        try:
+            # Ask user if they want to shutdown the instrument
+            reply = QMessageBox.question(
+                self,
+                "Shutdown Instrument",
+                "Do you want to shutdown the instrument before closing the software?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QMessageBox.StandardButton.Cancel:
+                # User cancelled, don't close the application
+                event.ignore()
+                return
+            elif reply == QMessageBox.StandardButton.Yes:
+                # User wants to shutdown instrument
+                if not self._shutdown_instrument_on_exit():
+                    # If shutdown failed, ask if they still want to close
+                    reply2 = QMessageBox.question(
+                        self,
+                        "Shutdown Failed",
+                        "Failed to shutdown instrument. Do you still want to close the software?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply2 == QMessageBox.StandardButton.No:
+                        event.ignore()
+                        return
+            
+            # Continue with normal cleanup
+            self._perform_cleanup()
+            
             logger.info("Main window closed")
             event.accept()
             
         except Exception as e:
             logger.error(f"Error during close: {e}")
             event.accept()
+
+
+def main():
+    """Main entry point for the GUI application."""
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    from ..utils.config import Config
+    
+    # Create QApplication
+    app = QApplication(sys.argv)
+    app.setApplicationName("CO_O2_Analyser")
+    app.setApplicationVersion("1.0.0")
+    app.setOrganizationName("CO_O2_Analyser")
+    
+    try:
+        # Load configuration
+        config = Config()
+        
+        # Create and show main window
+        window = MainWindow(config)
+        window.show()
+        
+        # Start event loop
+        sys.exit(app.exec())
+        
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}")
+        sys.exit(1)

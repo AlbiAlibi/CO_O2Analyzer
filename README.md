@@ -13,7 +13,8 @@
 - **Automated Data Harvesting**: Retrieves data from the Teledyne N300M using RESTful API
 - **Database Integration**: SQLite database for historical measurement storage
 - **Data Export**: Export measurements to CSV, JSON, and other formats
-- **Configurable Settings**: Easy configuration management for instrument settings
+- **Settings Management**: Comprehensive settings dialog for configuration management
+- **Instrument Management**: Time synchronization, shutdown, and restart functionality
 - **Logging & Monitoring**: Comprehensive logging and error handling
 - **Cross-platform**: Works on Windows, macOS, and Linux
 
@@ -39,24 +40,50 @@
    - ✅ Both 'warnings flags' and 'Statistics' sections update with data collection
    - ✅ Performance optimized with proper intervals (60s all data, 1.5s concentration, 10s status)
 
-4. **CSV Export Fix**
-   - Investigate and fix CSV export functionality
-   - Ensure proper data formatting and file generation
+4. **✅ CSV Export Fix** *(COMPLETED)*
+   - ✅ Fixed CSV export functionality with proper field handling
+   - ✅ Implemented per-measurement session export with datetime stamps
+   - ✅ Added comprehensive data formatting and file generation
+   - ✅ Created organized results folder structure
 
 5. **✅ Data Collection Time Configuration** *(COMPLETED)*
    - ✅ Implemented dialog box for "start data collection" time configuration
    - ✅ Default value: 10 minutes (configurable)
    - ✅ User can modify collection duration through measurement session dialog
 
-6. **Active Collection Visualization**
-   - Display blue line on graph when "Start Data Collection" button is active
-   - Line should persist across all "Time Range" views
-   - Visual indicator for active data collection periods
+6. **✅ Settings Management System** *(COMPLETED)*
+   - ✅ Comprehensive settings dialog with tabbed interface
+   - ✅ Instrument configuration (IP, port, timeout, retry attempts)
+   - ✅ Database settings (path, backup interval)
+   - ✅ GUI settings (window size, theme)
+   - ✅ Data collection intervals configuration
+   - ✅ Logging configuration (level, file, max size)
+   - ✅ Settings validation and testing functionality
+   - ✅ Automatic config file creation and management
 
-7. **Dynamic Fume Limit Line**
+7. **✅ Instrument Management System** *(COMPLETED)*
+   - ✅ Time synchronization with computer time
+   - ✅ Instrument shutdown and restart functionality
+   - ✅ Data collector process management
+   - ✅ Real-time operation logging and status display
+   - ✅ Safety confirmations for critical operations
+   - ✅ Integration with main application menu
+
+8. **✅ Active Collection Visualization** *(COMPLETED)*
+   - ✅ Display blue line on graph when "Start Data Collection" button is active
+   - ✅ Line persists across all "Time Range" views
+   - ✅ Visual indicator for active data collection periods
+
+9. **Dynamic Fume Limit Line**
    - Implement dynamic Fume Limit line on CO graph
    - Convert limit from mg/m³ to PPM CO units
    - Real-time recalculation and display
+
+10. **CO Auto Zero Module** *(IN DEVELOPMENT)*
+    - CO zero point correction functionality using CO_ZERO_CONC_1 tag
+    - Dynamic zero calibration enable/disable using SV_DYNAMIC_ZERO_ENABLE tag
+    - Test sequence with values -3, 0, 3, 4 and 5-second delays
+    - **Status**: Currently disabled and in development
 
 ### Technical Considerations
 
@@ -124,6 +151,9 @@ python main.py
 # Basic usage example
 python examples/basic_usage.py
 
+# Settings dialog demonstration
+python examples/settings_demo.py
+
 # Or install and run as module
 pip install -e .
 co-o2-analyser
@@ -152,7 +182,9 @@ CO_O2Analyser/
 │       ├── gui/                  # Graphical interface
 │       │   ├── main_window.py    # Main window (GUI coordinator)
 │       │   ├── plot_widget.py    # Real-time plotting widget
-│       │   └── status_widget.py  # Status display with color-coded values
+│       │   ├── status_widget.py  # Status display with color-coded values
+│       │   ├── settings_dialog.py # Settings management dialog
+│       │   └── instrument_management_dialog.py # Instrument control dialog
 │       └── utils/                # Utilities
 │           ├── config.py         # Configuration management
 │           ├── CSVharvester.py   # CSV export utilities
@@ -162,6 +194,8 @@ CO_O2Analyser/
 ├── tests/                        # Test suite
 ├── docs/                         # Documentation
 ├── examples/                     # Usage examples
+│   ├── basic_usage.py           # Basic usage example
+│   └── settings_demo.py         # Settings dialog demonstration
 ├── notatki/                      # Development notes and documentation
 ├── logs/                         # Application logs
 ├── measurements/                 # Measurement session databases
@@ -227,6 +261,45 @@ The system supports **session-based measurements** with the following features:
 - **Session Management**: Start/stop sessions with proper timestamp recording
 - **Data Isolation**: Session data is separate from continuous logging data
 - **Session History**: Track all measurement sessions with metadata (start time, end time, duration, measurement count)
+
+#### Data Export System
+The application provides comprehensive data export functionality with the following features:
+
+**Export Button Functionality:**
+- **One-Click Export**: Click the "Export" button to export all measurement sessions
+- **Per-Session Files**: Each measurement session is exported to a separate CSV file
+- **Organized Storage**: All exports are saved in the `results/` folder
+- **Timestamp Naming**: Files are named with session start time (`measurement_YYYYMMDD_HHMMSS.csv`)
+
+**Export File Structure:**
+```
+results/
+├── measurement_20250903_102603.csv  # Session from 03/09/25 at 10:26:03
+├── measurement_20250904_161055.csv  # Session from 04/09/25 at 16:10:55
+└── measurement_20250905_143000.csv  # Session from 05/09/25 at 14:30:00
+```
+
+**CSV File Contents:**
+Each exported CSV file includes:
+- **Session Metadata Header**: Comments with session start/end times, duration, and measurement count
+- **Complete Measurement Data**: All fields from the measurement database
+- **Fume Limit Calculations**: Automatic fume limit and percentage to limit calculations
+- **Air Quality Status**: Fresh Air/Industrial Exhaust/Invalid O₂ classifications
+- **Comprehensive Fields**: timestamp, co_concentration, o2_concentration, sample_temp, sample_flow, fume_limit_mg_m3, percentage_to_limit, air_quality_status, instrument_status, error_code, warning_flags
+
+**Export Process:**
+1. **Session Discovery**: Automatically finds all measurement sessions in the `measurements/` folder
+2. **Data Retrieval**: Extracts measurement data from each session database
+3. **Metadata Extraction**: Retrieves session start/end times and measurement counts
+4. **File Generation**: Creates timestamped CSV files with proper formatting
+5. **Error Handling**: Continues exporting other sessions if one fails
+6. **User Feedback**: Shows success message with list of exported files
+
+**Technical Implementation:**
+- **Field Compatibility**: Handles all measurement model fields including optional ones
+- **Data Filtering**: Removes None values and converts lists to strings for CSV compatibility
+- **Error Recovery**: Robust error handling ensures partial failures don't stop the entire export
+- **Memory Efficient**: Processes sessions one at a time to minimize memory usage
 
 ## 🔧 Configuration
 
@@ -411,12 +484,36 @@ The system uses two types of databases:
 
 ### Configuration Management
 
+#### Settings Dialog
+
+The application now includes a comprehensive **Settings Dialog** accessible via **Tools → Settings** in the main menu. The dialog provides:
+
+**Tabbed Interface:**
+- **Instrument Tab**: IP address, port, timeout, retry attempts, simulation mode, tag configuration
+- **Database Tab**: Database path, backup interval settings
+- **GUI Tab**: Window dimensions, theme selection
+- **Data Collection Tab**: Collection intervals for different data types
+- **Logging Tab**: Log level, file path, and size limits
+
+**Settings Testing:**
+- **Test Settings Button**: Validates all configuration settings
+- **Instrument Connection Test**: Tests connectivity to the instrument
+- **Database Path Test**: Validates database file accessibility
+- **Logging Config Test**: Verifies log file write permissions
+
+**Configuration Management:**
+- **Load/Save**: Automatic loading and saving of config.json
+- **Default Values**: Fallback to sensible defaults
+- **Validation**: Input validation and error handling
+- **Restore Defaults**: Reset all settings to default values
+
 #### Editing Configuration
 
-1. **Automatic Creation**: The config file is created automatically on first run
-2. **Manual Editing**: Edit the JSON file directly with any text editor
-3. **Hot Reload**: Configuration changes require application restart
-4. **Validation**: Invalid JSON will cause the application to use default values
+1. **Settings Dialog**: Use the GUI settings dialog for easy configuration
+2. **Automatic Creation**: The config file is created automatically on first run
+3. **Manual Editing**: Edit the JSON file directly with any text editor
+4. **Hot Reload**: Configuration changes require application restart
+5. **Validation**: Invalid JSON will cause the application to use default values
 
 #### Configuration Examples
 
@@ -449,6 +546,46 @@ The system uses two types of databases:
   }
 }
 ```
+
+## 🔧 Instrument Management
+
+The application includes comprehensive **Instrument Management** capabilities accessible via **Tools → Instrument Settings** in the main menu.
+
+### Features
+
+**Time Synchronization:**
+- **Automatic Sync**: Synchronize instrument time with computer time
+- **Real-time Display**: Shows current computer time in the dialog
+- **Configuration Setup**: Automatically configures time sync settings
+- **Verification**: Confirms time changes on the instrument
+
+**Instrument Control:**
+- **Restart Instrument**: Send restart command to the instrument
+- **Shutdown Instrument**: Send shutdown command to the instrument
+- **Data Collector Management**: Automatically stops data collector before operations
+- **Safety Confirmations**: User confirmation for critical operations
+
+**Operation Monitoring:**
+- **Real-time Logging**: Detailed operation logs with timestamps
+- **Progress Indicators**: Visual feedback during operations
+- **Status Display**: Shows data collector status and operation results
+- **Error Handling**: Comprehensive error handling with user-friendly messages
+
+### Usage
+
+1. **Open Instrument Management**: Go to **Tools** → **🔧 Instrument Settings**
+2. **Time Sync**: Click "🕐 Synchronize Instrument Time" to sync with computer time
+3. **Restart**: Click "🔄 Restart Instrument" to restart the instrument
+4. **Shutdown**: Click "⏹️ Shutdown Instrument" to shutdown the instrument
+5. **Monitor**: Watch the operation logs for real-time feedback
+
+### Safety Features
+
+- **Data Collector Stop**: Automatically stops data collection before shutdown/restart
+- **Confirmation Dialogs**: User confirmation required for critical operations
+- **Connection Validation**: Checks instrument connectivity before operations
+- **Error Recovery**: Graceful handling of connection failures
+- **Application Exit Shutdown**: Option to shutdown instrument when closing the application
 
 ## 📊 API Documentation
 
@@ -536,6 +673,16 @@ co_value = instrument.get_tag_value("CO_Concentration")
    - Verify PyQt6 installation
    - Check Python version (3.11+)
    - Review error logs
+
+4. **Settings Dialog Issues**:
+   - Check config file permissions
+   - Verify JSON syntax in config file
+   - Use "Test Settings" button to validate configuration
+
+5. **Instrument Management Issues**:
+   - Verify instrument is powered on and connected
+   - Check network connectivity to instrument IP
+   - Ensure data collector is stopped before shutdown/restart operations
 
 ### Getting Help
 
